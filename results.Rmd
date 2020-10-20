@@ -1,0 +1,749 @@
+---
+title: Result section for Geographic Variations in Response to New Heart Allocation Policy*
+author: "Julia Ran, William Parker"
+output:
+  rmdformats::material:
+    highlight: tango
+  html_document:
+    theme: cosmo
+    toc: yes
+---
+
+```{r setup, include=FALSE, echo= FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+require("knitr")
+opts_knit$set(root.dir = "C:/Users/julia/Google Drive/Pritzker/SRP/Codes/SAF SAS files")
+
+```
+
+```{r load libraries, echo=FALSE}
+library("ggplot2")  
+library("tidyverse")
+library("haven")
+library("rmdformats")
+library("ggthemes")
+library("dplyr")
+```
+
+# Load files
+```{r load file, echo=FALSE}
+final_sample <- read_csv("C:/Users/julia/Google Drive/Pritzker/SRP/Codes/SAF SAS files/final_sample.csv")
+
+for_table_1 <- read_csv("C:/Users/julia/Google Drive/Pritzker/SRP/Codes/SAF SAS files/for_table_1.csv")
+
+start_date <- as.Date("2016-12-01")
+end_date <- as.Date("2020-02-28")
+pre_policy_end_date <- as.Date("2018-02-28")
+post_policy_start_date <- as.Date("2018-12-01")
+policy_switch_date <- as.Date("2018-10-18")
+cand_thor <- read_sas("C:/Users/julia/Google Drive/Pritzker/SRP/Codes/SAF SAS files/cand_thor.sas7bdat", NULL) %>%  
+  zap_formats() %>% zap_labels()
+
+init_list <- cand_thor %>% 
+   mutate(list_date = CAN_LISTING_DT) %>% 
+    filter(list_date >= start_date & list_date <= end_date & WL_ORG == "HR")  %>% 
+  #filter(list_date <=pre_policy_end_date | list_date >= post_policy_start_date) %>% 
+  mutate(status = CAN_INIT_STAT, 
+         center = CAN_LISTING_CTR_ID,
+         date_start = list_date) %>% 
+  filter(CAN_AGE_AT_LISTING >17) 
+
+
+modelhigh_output<- read.csv("C:/Users/julia/Google Drive/Pritzker/SRP/Codes/data_codes/high_stata_output.csv",sep="\t", header=TRUE)
+
+model_highstatus <- modelhigh_output %>% 
+  select(ctr_cd, policy_factor, high_status)
+
+modelhigh_output <- modelhigh_output %>% 
+  select(-high_status)
+
+CMS_adjusted <- read_csv("C:/Users/julia/Google Drive/Pritzker/SRP/Codes/data_codes/CMS_adjusted_rates.csv")
+
+CMS_full <- read_csv("C:/Users/julia/Google Drive/Pritzker/SRP/Codes/data_codes/figure_2_CMS.csv")
+
+logit2prob <- function(logit){
+  odds <- exp(-logit)
+  prob <- 1 / (1 + odds)
+  return(prob)
+}
+
+model_high_clean <- modelhigh_output %>% 
+  distinct(ctr_cd, policy_factor, .keep_all = TRUE) %>% 
+  group_by(ctr_cd) %>% 
+  spread(key = policy_factor, value = N_ctr) %>% 
+  ungroup() %>% 
+  rename(N_pre = Pre,
+         N_post = Post) %>% 
+  mutate(
+    pct_pre = prob_pre*100,
+    pct_post = prob_post*100,
+    diff = (prob_post - prob_pre)*100,
+    se_pre = sqrt(prob_pre*(1-prob_pre)/N_pre),
+    se_post = sqrt(prob_post*(1-prob_post)/N_post),
+    lower_ci_pre = pct_pre -1.96*se_pre*100,
+    upper_ci_pre = pct_pre +1.96*se_pre*100,
+    lower_ci_post = pct_post - 1.96*se_post*100,
+    upper_ci_post = pct_post +1.96*se_post*100,
+    lower_ci_pre = ifelse(lower_ci_pre<0,0,lower_ci_pre),
+    lower_ci_post = ifelse(lower_ci_post<0,0,lower_ci_post)
+  ) %>% 
+  mutate(
+    diff_sig = prob_post - prob_pre,
+    se_diff = sqrt(prob_pre*(1-prob_pre)/N_pre+prob_post*(1-prob_post)/N_post),
+    t_diff = diff_sig/se_diff,
+    sig = ifelse(t_diff >1.96, as.character(upper_ci_post + 5), ""),
+    sig1 = as.numeric(sig)
+  )
+```
+
+# Functions for formating numbers
+```{r formatting functions, echo=FALSE}
+comma <- function(x){
+  case_when(
+    abs(x) > 10 ~ format(x, digits = 0, big.mark = ","),
+    abs(x) > 1 ~ format(x, digits = 3, big.mark = ","),
+    TRUE ~ format(x, digits = 3, big.mark = ",")
+  )
+    
+}
+
+comma_p <- function(x){
+  case_when(
+    x < 0.001 ~ "p<0.001",
+    x < 0.01 ~ paste0("p=" ,format(x, digits = 1, big.mark = ",")),
+    TRUE ~ paste0("p=" ,format(x, digits = 3, big.mark = ","))
+  )
+}
+```
+
+# Paragraph 1
+```{r sample size, echo=FALSE}
+n_total = nrow(init_list)
+
+n_ctr = final_sample %>% 
+  filter(!is.na(policy)) %>% 
+  filter(status !="Status 5") %>% 
+  select(CTR_CD) %>% 
+  distinct() %>% 
+  nrow()
+
+n_opo = final_sample %>% 
+  filter(!is.na(policy)) %>% 
+  filter(status !="Status 5") %>% 
+  select(SERVED_OPO_CD) %>% 
+  distinct() %>% 
+  nrow()
+
+n_included = nrow(for_table_1)
+
+n_excluded = n_total - n_included
+
+pre_policy <- for_table_1 %>% 
+    filter(policy == "Dec 2016 - Feb 2018 (Pre-Policy)") 
+
+post_policy <- for_table_1 %>% 
+    filter(policy == "Dec 2018 - Feb 2020 (Post-policy)")  
+
+n_total_pre = pre_policy %>% 
+  nrow()
+
+n_total_post = post_policy %>% 
+  nrow()
+
+res_n = prop.test(x = n_total_pre, n = n_included, p = 0.5, correct = FALSE)
+```
+
+```{r white, echo=FALSE}
+white_pre = pre_policy %>% 
+  filter(race == "White") %>% 
+  nrow()
+
+pct_white_pre = paste0(comma(100*(white_pre/n_total_pre)),"%")
+
+
+white_post = post_policy %>% 
+  filter(race == "White") %>% 
+  nrow()
+
+pct_white_post = paste0(comma(100*(white_post/n_total_post)),"%")
+
+se_white_diff = sqrt(
+           ((white_pre/n_total_pre) * (1-(white_pre/n_total_pre))/n_total_pre)+
+             ((white_post/n_total_post) *(1-(white_post/n_total_post))/n_total_post))*100
+
+abs_white_diff = round((white_post/n_total_post)*100 - (white_pre/n_total_pre)*100, 1)
+low_white_ci = comma(abs_white_diff - 1.96*se_white_diff)
+up_white_ci = comma(abs_white_diff + 1.96*se_white_diff)
+
+white_stat = paste0("absolute difference, ", abs_white_diff, "%", "; 95% CI: ", low_white_ci, "% to ", up_white_ci,"%")
+
+
+```
+
+```{r work, echo=FALSE}
+work_pre = pre_policy %>% 
+  filter(Working == "Working") %>% 
+  nrow()
+
+pct_work_pre = paste0(comma(100*(work_pre/n_total_pre)),"%")
+
+
+work_post = post_policy %>% 
+  filter(Working == "Working") %>% 
+  nrow()
+
+pct_work_post = paste0(comma(100*(work_post/n_total_post)),"%")
+
+se_work_diff = sqrt(
+           ((work_pre/n_total_pre) * (1-(work_pre/n_total_pre))/n_total_pre)+
+             ((work_post/n_total_post) *(1-(work_post/n_total_post))/n_total_post))*100
+
+abs_work_diff = round((work_post/n_total_post)*100 - (work_pre/n_total_pre)*100, 1)
+low_work_ci = comma(abs_work_diff - 1.96*se_work_diff)
+up_work_ci = comma(abs_work_diff + 1.96*se_work_diff)
+
+work_stat = paste0("absolute difference, ", abs_work_diff, "%", "; 95% CI: ", low_work_ci, "% to ", up_work_ci,"%")
+
+```
+
+
+```{r smoke, echo=FALSE}
+smoke_pre = pre_policy %>% 
+  filter(History_of_Smoking == "Smoking history") %>% 
+  nrow()
+
+pct_smoke_pre = paste0(round(100*(smoke_pre/n_total_pre),1),"%")
+
+
+smoke_post = post_policy %>% 
+  filter(History_of_Smoking == "Smoking history") %>% 
+  nrow()
+
+pct_smoke_post = paste0(round(100*(smoke_post/n_total_post),1),"%")
+
+se_smoke_diff = sqrt(
+           ((smoke_pre/n_total_pre) * (1-(smoke_pre/n_total_pre))/n_total_pre)+
+             ((smoke_post/n_total_post) *(1-(smoke_post/n_total_post))/n_total_post))*100
+
+abs_smoke_diff = round((smoke_post/n_total_post)*100 - (smoke_pre/n_total_pre)*100, 1)
+low_smoke_ci = round(abs_smoke_diff - 1.96*se_smoke_diff,1)
+up_smoke_ci = round(abs_smoke_diff + 1.96*se_smoke_diff,1)
+
+smoke_stat = paste0("absolute difference, ", abs_smoke_diff, "%", "; 95% CI: ", low_smoke_ci, "% to ", up_smoke_ci,"%")
+
+```
+
+```{r bmi, echo=FALSE}
+bmi <- for_table_1 %>% 
+  select(bmi, policy) %>% 
+  mutate(bmi = as.numeric(bmi)) %>% 
+  group_by(policy) %>% 
+  summarise(mean_bmi = mean(bmi,na.rm=TRUE), sd = sd(bmi, na.rm= TRUE),count = n()) %>%
+  mutate(mean_bmi = round(mean_bmi,1),
+         sd  = round(sd,1)) %>% 
+  ungroup() %>%
+  mutate(diff = round(mean_bmi - lag(mean_bmi, default = mean_bmi[1]),1),
+         var = (sd^2)/count,
+         se_diff = round(sqrt(sum(var)),1),
+         policy = ifelse(policy == "Dec 2016 - Feb 2018 (Pre-Policy)", "pre", "post")
+         )  %>% 
+  filter(policy =="post") %>% 
+  select(diff,se_diff) %>% 
+  mutate(low_ci = round(diff - 1.96*se_diff,1),
+         up_ci = round(diff + 1.96*se_diff,1),
+         ci = paste0("[", comma(low_ci), " to ", comma(up_ci), "]"),
+         change <- paste0(diff, " ", ci)
+         )
+
+abs_bmi_diff = paste0(bmi$diff)
+low_bmi_ci = round(bmi$low_ci,1)
+up_bmi_ci = round(bmi$up_ci,1)
+
+bmi_stat = paste0("absolute difference, ", abs_bmi_diff,"; 95% CI: ", low_bmi_ci, " to ", up_bmi_ci)
+
+```
+
+```{r ci, echo=FALSE}
+ci <- for_table_1 %>%   
+  select(cardiac_index, policy) %>%  
+  mutate(cardiac_index = as.numeric(cardiac_index)) %>% 
+  group_by(policy) %>%   
+  summarise(mean_ci = mean(cardiac_index,na.rm=TRUE), sd = sd(cardiac_index, na.rm= TRUE),count = n()) %>%
+  ungroup() %>%
+  mutate(mean_ci = mean_ci) %>% 
+  mutate(diff = mean_ci - lag(mean_ci, default = mean_ci[1]),
+         var = (sd^2)/count,
+         se_diff = sqrt(sum(var)),
+         policy = ifelse(policy == "Dec 2016 - Feb 2018 (Pre-Policy)", "pre", "post")
+         )  %>% 
+  filter(policy =="post") %>% 
+  select(diff,se_diff) %>% 
+  mutate(low_ci = diff - 1.96*se_diff,
+         up_ci = diff + 1.96*se_diff)
+
+abs_ci_diff = round(ci$diff,2)
+low_ci_ci = round(ci$low_ci,2)
+up_ci_ci = round(ci$up_ci,2)
+
+ci_stat = paste0("absolute difference, ", abs_ci_diff,"; 95% CI: ", low_ci_ci, " to ", up_ci_ci)
+```
+
+```{r fs, echo=FALSE}
+functional_status <- for_table_1 %>% 
+  select(functional_status, policy) %>% 
+  group_by(functional_status, policy) %>% 
+  summarise(count = n()) %>% 
+  spread(key = policy, value = count) %>%
+  rename(pre = `Dec 2016 - Feb 2018 (Pre-Policy)`,
+         post = `Dec 2018 - Feb 2020 (Post-policy)`) %>%
+  ungroup() %>% 
+  mutate(pre = ifelse(is.na(pre), 0, pre),
+         post = ifelse(is.na(post),0,post))%>% 
+  mutate(prop_pre = pre/n_total_pre,
+         prop_post = post/n_total_post,
+         se_diff = sqrt(
+           (prop_pre * (1-prop_pre)/n_total_pre)+
+             (prop_post *(1-prop_post)/n_total_post)
+           )*100,
+         pct_pre = prop_pre*100,
+         pct_post = prop_post*100,
+         abs_pct_diff = round(pct_post - pct_pre, 1),
+         low_ci = round(abs_pct_diff - 1.96*se_diff,1),
+         up_ci = round(abs_pct_diff + 1.96*se_diff,1),
+         ci = paste0("[", comma(low_ci), "% to ", comma(up_ci), "%]"),
+         change <- paste0(abs_pct_diff, " ", ci)
+         ) %>% 
+  rename(change = `change <- paste0(abs_pct_diff, " ", ci)`) 
+
+
+abs_fs_diff = paste0(functional_status$abs_pct_diff[3])
+low_fs_ci = paste0(functional_status$low_ci[3])
+up_fs_ci = paste0(functional_status$up_ci[3])
+
+fs_stat = paste0("absolute difference in % with severe impairment, ", abs_fs_diff, "%", "; 95% CI: ", low_fs_ci, "% to ", up_fs_ci,"%")
+
+```
+
+```{r fs_missing, echo=FALSE}
+abs_fsm_diff = paste0(round(functional_status$abs_pct_diff[4],1))
+low_fsm_ci = paste0(round(functional_status$low_ci[4],1))
+up_fsm_ci = paste0(round(functional_status$up_ci[4],1))
+
+fsm_stat = paste0("absolute difference, ", abs_fsm_diff, "%", "; 95% CI: ", low_fsm_ci, "% to ", up_fsm_ci,"%")
+
+```
+
+```{r db_missing, echo=FALSE}
+diabetes <- for_table_1 %>% 
+  select(diabetes, policy) %>% 
+  group_by(diabetes, policy) %>% 
+  summarise(count = n()) %>% 
+  spread(key = policy, value = count) %>%
+  rename(pre = `Dec 2016 - Feb 2018 (Pre-Policy)`,
+         post = `Dec 2018 - Feb 2020 (Post-policy)`) %>%
+  ungroup() %>% 
+  mutate(pre = ifelse(is.na(pre), 0, pre),
+         post = ifelse(is.na(post),0,post))%>% 
+  mutate(prop_pre = pre/n_total_pre,
+         prop_post = post/n_total_post,
+         se_diff = sqrt(
+           (prop_pre * (1-prop_pre)/n_total_pre)+
+             (prop_post *(1-prop_post)/n_total_post)
+           )*100,
+         pct_pre = prop_pre*100,
+         pct_post = prop_post*100,
+         abs_pct_diff = round(pct_post - pct_pre, 1),
+         low_ci = round(abs_pct_diff - 1.96*se_diff,1),
+         up_ci = round(abs_pct_diff + 1.96*se_diff,1),
+         ci = paste0("[", comma(low_ci), "% to ", comma(up_ci), "%]"),
+         change <- paste0(abs_pct_diff, " ", ci)
+         ) %>% 
+  rename(change = `change <- paste0(abs_pct_diff, " ", ci)`)
+
+abs_dbm_diff = paste0(diabetes$abs_pct_diff[3])
+low_dbm_ci = paste0(diabetes$low_ci[3])
+up_dbm_ci = paste0(diabetes$up_ci[3])
+
+dbm_stat = paste0("absolute difference, ", abs_dbm_diff, "%", "; 95% CI: ", low_dbm_ci, "% to ", up_dbm_ci,"%")
+
+```
+
+```{r pcwp}
+pcwp <- for_table_1 %>%   
+  select(pcwp, policy) %>%  
+  mutate(pcwp = as.numeric(pcwp)) %>% 
+  group_by(policy) %>%   
+  summarise(mean_pcwp = mean(pcwp,na.rm=TRUE), sd = sd(pcwp, na.rm= TRUE),count = n()) %>%
+  ungroup() %>%
+  mutate(mean_pcwp = mean_pcwp) %>% 
+  mutate(diff = mean_pcwp - lag(mean_pcwp, default = mean_pcwp[1]),
+         var = (sd^2)/count,
+         se_diff = sqrt(sum(var)),
+         policy = ifelse(policy == "Dec 2016 - Feb 2018 (Pre-Policy)", "pre", "post")
+         )  %>% 
+  filter(policy =="post") %>% 
+  select(diff,se_diff) %>% 
+  mutate(low_ci = diff - 1.96*se_diff,
+         up_ci = diff + 1.96*se_diff)
+
+abs_pcwp_diff = round(pcwp$diff,2)
+low_pcwp_ci = round(pcwp$low_ci,2)
+up_pcwp_ci = round(pcwp$up_ci,2)
+
+pcwp_stat = paste0("absolute difference, ", abs_pcwp_diff,"; 95% CI: ", low_pcwp_ci, " to ", up_pcwp_ci)
+```
+
+A total of `r comma(n_total)` active, adult heart-only candidates were listed during the study period. `r n_excluded` candidates were excluded from analysis using exclusion criteria listed in Figure 1. The total size of the study population was `r n_included` from `r n_ctr` transplant centers within `r n_opo` Organ Procurement Organizations (OPO). The number of patients from the pre-policy period (Dec 1, 2016 to Feb 28, 2018) and post-policy period (Dec 1, 2018 to Feb 28, 2020) were comparable (`r n_total_pre` vs `r n_total_post`, `r comma_p(res_n$p.value)` by one-proportion Z-test). Table 1 compares candidate characteristics between the pre-policy and post-policy cohort. Overall, the socioeconomic and clinical characteristics of listed candidates remained largely unchanged across policy periods. Candidates listed in the post-policy period  exhibited slightly worse cardiac index (`r ci_stat`), and worse functional status (`r fs_stat`). Mean pulmonary capillary wedge pressure was comparable between the two policy periods (`r pcwp_stat`)
+
+
+# Paragraph 2
+```{r status, echo= FALSE}
+status <- final_sample %>% 
+  filter(!is.na(policy),
+         status !="Status 5") %>% 
+  select(policy, status) %>% 
+  group_by(status, policy) %>% 
+  count() %>% 
+  spread(key = policy, value = n) %>% 
+  rename(pre = `Dec 2016 - Feb 2018 (Pre-Policy)`,
+         post = `Dec 2018 - Feb 2020 (Post-policy)`) %>% 
+  mutate(pct_s_pre = 100*pre/n_total_pre,
+         pct_s_post = 100*post/n_total_post,
+         diff = pct_s_post - pct_s_pre,
+         se_s_diff = sqrt(
+           (pre/n_total_pre) * (1-(pre/n_total_pre))/n_total_pre +
+             ((post/n_total_post) *(1-(post/n_total_post))/n_total_post))*100)
+
+abs_s1 = status$diff[1]
+abs_s2 = status$diff[2]
+abs_s3 = status$diff[3]
+abs_s4 = status$diff[4]
+abs_s6 = status$diff[5]
+
+low_s1_ci = abs_s1 - 1.96*status$se_s_diff[1]
+low_s2_ci = abs_s2 - 1.96*status$se_s_diff[2]
+low_s3_ci = abs_s3 - 1.96*status$se_s_diff[3]
+low_s4_ci = abs_s4 - 1.96*status$se_s_diff[4]
+low_s6_ci = abs_s6 - 1.96*status$se_s_diff[5]
+
+up_s1_ci = abs_s1 + 1.96*status$se_s_diff[1]
+up_s2_ci = abs_s2 + 1.96*status$se_s_diff[2]
+up_s3_ci = abs_s3 + 1.96*status$se_s_diff[3]
+up_s4_ci = abs_s4 + 1.96*status$se_s_diff[4]
+up_s6_ci = abs_s6 + 1.96*status$se_s_diff[5]
+
+n_s2_pre = paste0(comma(status$pre[2]))
+p_s2_pre = paste0(round(status$pct_s_pre[2],1), "%")
+n_s2_post =paste0(comma(status$post[2]))
+p_s2_post = paste0(round(status$pct_s_post[2],1), "%")
+s2_stat = paste0("absolute difference, ", round(abs_s2,1), "%", "; 95% CI: ", round(low_s2_ci,1), "% to ", round(up_s2_ci,1),"%")
+
+
+
+n_s1_pre = paste0(comma(status$pre[1]))
+p_s1_pre = paste0(round(status$pct_s_pre[1],1), "%")
+n_s1_post =paste0(comma(status$post[1]))
+p_s1_post = paste0(round(status$pct_s_post[1],1), "%")
+s1_stat = paste0("absolute difference, ", round(abs_s1,1), "%", "; 95% CI: ", round(low_s1_ci,1), "% to ", round(up_s1_ci,1),"%")
+
+
+n_s3_pre = paste0(comma(status$pre[3]))
+p_s3_pre = paste0(round(status$pct_s_pre[3],1), "%")
+n_s3_post =paste0(comma(status$post[3]))
+p_s3_post = paste0(round(status$pct_s_post[3],1), "%")
+s3_stat = paste0("absolute difference, ", comma(abs_s3), "%", "; 95% CI: ", comma(low_s3_ci), "% to ", comma(up_s3_ci),"%")
+
+
+n_s4_pre = paste0(comma(status$pre[4]))
+p_s4_pre = paste0(round(status$pct_s_pre[4],1), "%")
+n_s4_post =paste0(comma(status$post[4]))
+p_s4_post = paste0(round(status$pct_s_post[4],1), "%")
+s4_stat = paste0("absolute difference, ", comma(abs_s4), "%", "; 95% CI: ", comma(low_s4_ci), "% to ", comma(up_s4_ci),"%")
+
+
+n_s6_pre = paste0(comma(status$pre[5]))
+p_s6_pre = paste0(round(status$pct_s_pre[5],1), "%")
+n_s6_post =paste0(comma(status$post[5]))
+p_s6_post = paste0(round(status$pct_s_post[5],1), "%")
+s6_stat = paste0("absolute difference, ", round(abs_s6,1), "%", "; 95% CI: ", round(low_s6_ci,1), "% to ", round(up_s6_ci,1),"%")
+
+```
+
+After applying the new status justification to candidates listed in pre-policy period, the expected status distribution was `r p_s1_pre` Status 1, `r p_s2_pre` Status 2, `r p_s3_pre` Status 3, `r p_s4_pre` Status 4, and `r p_s6_pre` Status 6. The observed status distribution after implementing the new policy was `r p_s1_post` Status 1, `r p_s2_post` Status 2, `r p_s3_post` Status 3, `r p_s4_post` Status 4, and `r p_s6_post` Status 6. The post-policy distribution was significantly different from the pre-policy distribution (p < 0.001 by chi-squared test). There were more high-priority listings than expected, with +`r round(abs_s1,1)` Status 1 (95% CI: `r round(low_s1_ci,1)` to `r round(up_s1_ci,1)`) and `r round(abs_s2,1)` Status 2 (95% CI: `r round(low_s2_ci,1)` to `r round(up_s2_ci,1)`). In contrast, there were fewer Status 3 (`r s3_stat`), Status 4 (`r s4_stat`), and Status 6 listings (`r s6_stat`). Figure 1 displays the monthly changes in the number of candidates assigned to each priority status across the two policy periods.
+
+
+# Justification for high-status listing in the post-policy period
+
+```{r exception, echo=FALSE}
+exception <- final_sample %>% 
+  filter(!is.na(policy),
+         status !="Status 5") %>% 
+  select(policy, status, treatment,status_1a) %>% 
+  mutate(status_total = case_when(
+    status_1a == "TRUE" & policy == "Dec 2016 - Feb 2018 (Pre-Policy)" ~ "Status 1A",
+    status_1a == "FALSE" & policy == "Dec 2016 - Feb 2018 (Pre-Policy)" ~ "Other", 
+    status_1a == "FALSE" & policy != "Dec 2016 - Feb 2018 (Pre-Policy)" ~ as.character(status)
+  )) %>% 
+  select(policy, status_total, treatment) #%>% 
+  group_by(status_total, treatment) %>% 
+  summarise(count = n()) %>% 
+  mutate(pct = round(count/sum(count)*100,0)) %>% 
+  ungroup()
+
+#pre-policy Status 1A treatment breakdown: ECMO, IABP, LVAD, other MCS, exception
+n_exp_1a <- exception$count[exception$status_total =="Status 1A" & exception$treatment == "Exception"]
+p_exp_1a <- exception$pct[exception$status_total =="Status 1A" & exception$treatment == "Exception"]
+
+n_mcs_1a <- exception$count[exception$status_total =="Status 1A" & exception$treatment == "Other MCS"]
+p_mcs_1a <- exception$pct[exception$status_total =="Status 1A" & exception$treatment == "Other MCS"]
+
+n_ecmo_1a<- exception$count[exception$status_total =="Status 1A" & exception$treatment == "ECMO"]
+p_ecmo_1a <- exception$pct[exception$status_total =="Status 1A" & exception$treatment == "ECMO"]
+
+n_lvad_1a<- exception$count[exception$status_total =="Status 1A" & exception$treatment == "LVAD"]
+p_lvad_1a <- exception$pct[exception$status_total =="Status 1A" & exception$treatment == "LVAD"]
+
+n_iabp_1a<- exception$count[exception$status_total =="Status 1A" & exception$treatment == "IABP"]
+p_iabp_1a <- exception$pct[exception$status_total =="Status 1A" & exception$treatment == "IABP"]
+
+#Status 1 treatment breakdown: ECMO, exception, other MCS
+n_ecmo_1<- exception$count[exception$status_total =="Status 1" & exception$treatment == "ECMO"]
+p_ecmo_1 <- exception$pct[exception$status_total =="Status 1" & exception$treatment == "ECMO"]
+
+n_exp_1 <- exception$count[exception$status_total =="Status 1" & exception$treatment == "Exception"]
+p_exp_1 <- exception$pct[exception$status_total =="Status 1" & exception$treatment == "Exception"]
+
+n_mcs_1 <- exception$count[exception$status_total =="Status 1" & exception$treatment == "Other MCS"]
+p_mcs_1 <- exception$pct[exception$status_total =="Status 1" & exception$treatment == "Other MCS"]
+
+#Status 2 treatment breakdown: IABP, LVAD, other MCS, exception
+
+n_iabp_2<- exception$count[exception$status_total =="Status 2" & exception$treatment == "IABP"]
+p_iabp_2 <- exception$pct[exception$status_total =="Status 2" & exception$treatment == "IABP"]
+
+n_lvad_2<- exception$count[exception$status_total =="Status 2" & exception$treatment == "LVAD"]
+p_lvad_2 <- exception$pct[exception$status_total =="Status 2" & exception$treatment == "LVAD"]
+
+n_mcs_2 <- exception$count[exception$status_total =="Status 2" & exception$treatment == "Other MCS"]
+p_mcs_2 <- exception$pct[exception$status_total =="Status 2" & exception$treatment == "Other MCS"]
+
+n_exp_2 <- exception$count[exception$status_total =="Status 2" & exception$treatment == "Exception"]
+p_exp_2 <- exception$pct[exception$status_total =="Status 2" & exception$treatment == "Exception"]
+
+exp_diff <- round((n_exp_1 + n_exp_2 - n_exp_1a)/n_exp_1a, 1)
+
+```
+
+In the pre-policy cohort, `r n_ecmo_1a` (`r p_ecmo_1a`%) candidates listed in Status 1A received ECMO, `r n_iabp_1a` (`r p_iabp_1a`%) received IABP, `r n_lvad_1a` (`r p_lvad_1a` %) received LVAD, and `r n_mcs_1a` (`r p_mcs_1a`%) received other MCS. `r n_exp_1a` (`r p_exp_1a`%) of Status 1A listings were justified by exception requests. 
+
+In the post-policy cohort, the observed Status 1 listings were justified by `r n_ecmo_1` (`r p_ecmo_1`%) ECMO, `r n_mcs_1` (`r p_mcs_1`%) MCS and `r n_exp_1` (`r p_exp_1`%) exception requests. Status 2 listings were justified by `r n_lvad_2` (`r p_lvad_2`%) LVAD, `r n_iabp_2`IABP, `r n_mcs_2` (`r p_mcs_2`%) other MCS, and `r n_exp_2` (`r p_exp_2`%) exception requests. The observed number of exception requests among Status 1 and 2 listings exceeded that of Status 1A by `r exp_diff` times. 
+
+# Estimated Probability of High Priority Status Listing Across Policy Periods (without CMS approach)
+
+```{r diff_change, echo = FALSE}
+
+range_diff = model_high_clean %>% 
+  select(ctr_cd, diff) %>% 
+  arrange(diff) %>% 
+  mutate(index = row_number()) 
+
+min_diff = round(range_diff$diff[1],1)
+max_diff = round(range_diff$diff[length(range_diff$diff)],1)
+
+iqr_diff = paste0("Inter-quartile range: ", round(quantile(range_diff$diff,0.25)),  "% to %", round(quantile(range_diff$diff,0.75),1)) 
+
+n_ctr_sig <- model_high_clean %>% 
+  select(ctr_cd, sig) %>% 
+  mutate(sig_count = ifelse(sig!="", as.numeric("1"), as.numeric("0"))) %>% 
+  summarise(count = sum(sig_count))
+
+
+n_ctr_sig = paste0(n_ctr_sig)
+
+p_ctr_sig = round(as.numeric(n_ctr_sig)/n_ctr*100,1)
+
+
+```
+
+```{r pre high_status range, echo = FALSE}
+range_pre = model_high_clean %>% 
+  select(ctr_cd, pct_pre) %>% 
+  arrange(pct_pre)
+
+min_pre = round(range_pre$pct_pre[1],1)
+
+max_pre = round(range_pre$pct_pre[length(range_pre$pct_pre)],1)
+
+iqr_pre = paste0("IQR: ", round(quantile(range_pre$pct_pre,0.25),1),  "% to %", round(quantile(range_pre$pct_pre,0.75),1)) 
+
+pre_range = paste0("min = ", min_pre, "%, max = ", max_pre,  "%, ", iqr_pre)
+```
+
+```{r post high_status range, echo = FALSE}
+range_post = model_high_clean %>% 
+  select(ctr_cd, pct_post) %>% 
+  arrange(pct_post)
+
+min_post = round(range_post$pct_post[1],1)
+
+max_post = round(range_post$pct_post[length(range_post$pct_post)],1)
+
+iqr_post = paste0("IQR: ", round(quantile(range_post$pct_post,0.25),1),  "% to ", round(quantile(range_post$pct_post,0.75),1), "%") 
+
+post_range = paste0("min = ", min_post, "%, max = ", max_post,  "%, ", iqr_post)
+```
+
+```{r Number of centers >10% and >20% post policy}
+N_10 <- model_high_clean %>% 
+  select(ctr_cd, diff) %>% 
+  filter(diff>10) %>% 
+  nrow()
+
+N_10 <- as.numeric(paste0(N_10))
+
+p_10 <- paste0(round(N_10/n_ctr,2)*100,"%")
+
+
+
+N_20 <- model_high_clean %>% 
+  select(ctr_cd, diff) %>% 
+  filter(diff>20) %>% 
+  nrow()
+
+N_20 <- as.numeric(paste0(N_20))
+
+p_20 <- paste0(round(N_20/n_ctr,2)*100,"%")
+
+```
+
+
+# Estimated Probability of High Priority Status Listing Across Policy Periods (WITH CMS approach)
+
+```{r diff_change, echo = FALSE}
+range_diff = CMS_adjusted %>% 
+  select(ctr_cd, policy_factor, adjusted_rate) %>% 
+  group_by(ctr_cd) %>% 
+  spread(key = policy_factor, value = adjusted_rate) %>% 
+  ungroup()%>%
+  mutate(diff = (Post - Pre)*100) %>% 
+  arrange(diff) %>% 
+  mutate(index = row_number()) 
+
+min_diff = round(range_diff$diff[1],1)
+max_diff = round(range_diff$diff[length(range_diff$diff)],1)
+
+iqr_diff = paste0("Inter-quartile range: ", round(quantile(range_diff$diff,0.25)),  "% to %", round(quantile(range_diff$diff,0.75),1)) 
+
+n_ctr_sig <- CMS_full %>% 
+  select(ctr_cd, policy_factor, sig1) %>% 
+  filter(policy_factor ==2) %>% 
+  filter(!is.na(sig1)) %>% 
+  summarise(count = n())
+
+
+n_ctr_sig = paste0(n_ctr_sig)
+
+p_ctr_sig = paste0(round(as.numeric(n_ctr_sig)/n_ctr*100,1))
+
+
+```
+
+```{r pre high_status range, echo = FALSE}
+range_pre = CMS_full %>% 
+  select(ctr_cd, policy_factor, adjusted_rate) %>% 
+  filter(policy_factor == 1) %>% 
+  mutate(adjusted_rate = adjusted_rate*100) %>% 
+  arrange(adjusted_rate)
+
+min_pre = round(range_pre$adjusted_rate[1],1)
+
+max_pre = round(range_pre$adjusted_rate[length(range_pre$adjusted_rate)],1)
+
+iqr_pre = paste0("IQR: ", round(quantile(range_pre$adjusted_rate,0.25),1),  "% to %", round(quantile(range_pre$adjusted_rate,0.75),1)) 
+
+pre_range = paste0("min = ", min_pre, "%, max = ", max_pre,  "%, ", iqr_pre)
+```
+
+```{r post high_status range, echo = FALSE}
+range_post = CMS_full %>% 
+  select(ctr_cd, policy_factor, adjusted_rate) %>% 
+  filter(policy_factor == 2) %>% 
+  mutate(adjusted_rate = adjusted_rate *100) %>% 
+  arrange(adjusted_rate)
+
+min_post = round(range_post$adjusted_rate[1],1)
+
+max_post = round(range_post$adjusted_rate[length(range_post$adjusted_rate)],1)
+
+iqr_post = paste0("IQR: ", round(quantile(range_post$adjusted_rate,0.25),1),  "% to ", round(quantile(range_post$adjusted_rate,0.75),1), "%") 
+
+post_range = paste0("min = ", min_post, "%, max = ", max_post,  "%, ", iqr_post)
+```
+
+```{r Number of centers >10% and >20% post policy}
+N_10 <- range_diff %>% 
+  select(ctr_cd, diff) %>% 
+  filter(diff>0.1) %>% 
+  nrow()
+
+N_10 <- as.numeric(paste0(N_10))
+
+p_10 <- paste0(round(N_10/n_ctr,2)*100,"%")
+
+
+
+N_20 <- range_diff %>% 
+  select(ctr_cd, diff) %>% 
+  filter(diff>0.2) %>% 
+  nrow()
+
+N_20 <- as.numeric(paste0(N_20))
+
+p_20 <- paste0(round(N_20/n_ctr,2)*100,"%")
+
+```
+
+On average, in the pre-policy cohort 7% of candidates were met high-priority status criteria (Status 1 & 2) compared to the 25% candidates listed at high-priority in the post-policy period (p <0.001). In the multilevel logistic regression accounting for center effects, the odds of listing at high-priority status was 423% higher in the post-policy period than expected (OR 5.23, 95% CI 4.26-6.42, Table 2). After controlling for candidate level variables, the odds were 534% higher (adjusted OR 6.34, 5.08-7.91%).
+
+After adjusting for changes in candidate-level characteristics, the expected pre-policy  high priority status listing rate varied from `r min_pre`% to `r max_pre`% (`r iqr_pre`). The observed high-status listing rates in the post-policy period varied from `r min_post`%, to `r max_post`% (`r iqr_post`) (Figure 2). A total of `r n_ctr_sig` (`r p_ctr_sig`%) of centers listed significantly more patients at high-priority status than expected (Figure 2). The observed rate of high-priority status listing exceeded expected by dramatically different rates between transplant centers, ranging from +2.2 % to +41.7 %, (Inter-quartile range: 8% to 18.4%).  A total of `r N_10` centers (`r p_10`) listed 10% more candidates at high status than expected and `r N_20` centers (`r p_20`) listed 20% more candidates than expected.
+
+
+# Association of center and OPO level variables and the change in high-status listing
+
+Figure 3 compares the geographic variation in the rate of high-priority status listing before and after implementing the new heart allocation policy. After adjusting for candidate-level characteristics and weighting by listing volume at constituent transplant centers, the rate of high-priority status listing increased in all OPOs. While the magnitude of the increase differs substantially across OPOs, its geographical pattern is inconspicuous. Areas of the greatest rates of high-priority status listing in the post-policy period not only include large urban areas, such as New York, Chicago, San Francisco, and Los Angeles, but also many OPOs in Midwestern and Southern United States.
+
+Among the three center-level predictors tested, the proportion of Status 1A patients receiving a transplant in the pre-policy period was significantly associated with greater chance of high-priority status listing (Table 2, see Supplement for full models). Transplant centers in OPOs with the highest quartile of pre-policy Status 1A transplant rate (>82%) were 4.18 times more likely to list a patient at high-priority status (aOR: 9.70; 95% CI: 6.65 to 14.13) in the post-policy period than those in OPOs with the lowest quartile (less than 72%) of Status 1A transplant rate (aOR: 5.52; 95% CI: 3.89,7.84). The variance of the random slope (0.28) quantifies the different correlations between policy implementation between transplant centers, and remains statistically significant across the three models.
+
+
+# Abstract
+
+```{r}
+#XX% IABP, YY% ECMO, ZZ% exception, WW% other . 
+p_iabp <- (n_iabp_2)/(as.numeric(n_s1_post) + as.numeric(n_s2_post))
+
+print_iabp <- paste0(round(p_iabp*100,0),"%")
+
+p_ecmo <- (n_ecmo_1)/(as.numeric(n_s1_post) + as.numeric(n_s2_post))
+print_ecmo <- paste0(round(p_ecmo*100,0),"%")
+
+p_exp <- (n_exp_1 + n_exp_2)/(as.numeric(n_s1_post) + as.numeric(n_s2_post))
+print_exp <- paste0(round(p_exp*100,0),"%")
+
+p_other <- 1- (p_iabp + p_ecmo + p_exp)
+print_other <- paste0(round(p_other*100,0),"%")
+
+```
+
+The therapies used to justify high-priority status listings were `r print_iabp` IABP, `r print_ecmo`% ECMO, `r print_exp` exception, `r print_other` other . 
+
+
+```{r chi-square test}
+status1 <-  status %>% 
+  select(status, post, pct_s_pre) %>% 
+  mutate(pct_s_pre = pct_s_pre/100)
+
+chisq.test(status1$post, p = status1$pct_s_pre)
+
+
+```
