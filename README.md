@@ -11,10 +11,14 @@ Part 1 of data analysis file fits a mixed-effect logistic regression model to ob
 
 Part 2 of data analysis fits three mixed-effect logisitic regression models to examine the confounding and/or modification by candidate characteristics and transplant center characteristics. 
 
+Variable_Coding transforms explanatory variables to their appropriate form or analysis. 
+
 ## Data Presentation
 
-The generate_table file is used to obtain all the statistics presented in Table 1.
+"generate_table" is used to obtain all the statistics presented in Table 1.
 
-The generate_table file is used to generate all of the figures included in the body of the manuscript and the supplement. 
+"generate_figures_final" is used to generate all of the figures included in the body of the manuscript and the supplement. 
+
+"results" and "rate_ratios" are used to generate statistics reported in the result section of the manuscript.
 
 The statistical appendix contains detailed methodology.
