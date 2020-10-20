@@ -1,0 +1,649 @@
+---
+author: "Julia Ran, William Parker"
+output:
+  rmdformats::material:
+    highlight: tango
+  html_document:
+    theme: cosmo
+    toc: yes
+---
+
+# Loading in packages 
+
+This chunk is used to load in the packages in R that help us to tidy, manipulate, and visualize the data. 
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+require("knitr")
+opts_knit$set(root.dir = "C:/Users/julia/Google Drive/Pritzker/SRP/Codes/SAF SAS files")
+
+```
+
+
+```{r library}
+library("ggplot2")  
+library("tidyverse")
+library("haven")
+library("rmdformats")
+library("ggthemes")
+library("dplyr")
+library("tidyselect")
+library(nnet)
+library(rmdformats)
+library(tableone)
+```
+
+
+## Loading in Final_Sample file 
+
+The file being uploaded is the same file that was the output of the data_preparation rmd. 
+```{r read_in_final_sample}
+setwd("C:/Users/julia/Google Drive/Pritzker/SRP/Codes/SAF SAS files")
+
+final_sample <- read_csv("final_sample.csv")
+
+```
+
+## Creating functions
+
+We created some functions in order to make our code more concise. 
+```{r two_rates_with_diff}
+comma <- function(x){
+  case_when(
+    abs(x) > 10 ~ format(x, digits = 0, big.mark = ","),
+    abs(x) > 1 ~ format(x, digits = 2, big.mark = ","),
+    TRUE ~ format(x, digits = 2, big.mark = ",")
+  )
+    
+}
+
+comma_p <- function(x){
+  case_when(
+    x < 0.001 ~ "p<0.001",
+    x < 0.01 ~ paste0("p=" ,format(x, digits = 1, big.mark = ",")),
+    TRUE ~ paste0("p=" ,format(x, digits = 2, big.mark = ","))
+  )
+}
+
+rates_by_policy_diff <- function(name, final_sample){
+  df <- final_sample %>%
+    group_by(policy) %>%
+    filter(!is.na(policy)) %>%
+    count(status) %>% 
+    mutate(total = sum(n),
+           pct_status = 100*n/total) %>%
+    filter(status == name)
+  
+  pre <- df[1,]
+  post <- df[2,]
+  
+  a <- prop.test(x = c(post$n, pre$n), n = c( post$total_treated, pre$total_treated))
+  low_ci <- 100*a$conf.int[1]
+  
+  up_ci <- 100*a$conf.int[2]
+  post <- df$percent_treated[[2]]
+  pre <- df$percent_treated[[1]]
+  diff <- (post - pre)
+  #paste0(name, "%; 95% CI ", comma(low_ci), "% to ", comma(up_ci), "%).")
+  paste0(name, " was used to list ", comma(pre), "% of candidates in the 3-tier system to ", comma(post), "% candidates in the 6-tier system (absolute difference ", comma(diff), "%; 95% CI ", comma(low_ci), "% to ", comma(up_ci), "%).")
+  
+}
+paragraph <- ""
+
+for (name in levels(final_sample$status)){
+  paragraph <- paste0(paragraph, " ", rates_by_policy_diff(name, final_sample))
+}
+```
+
+since there is no status 5 patients in the pre-policy group, I deselecte them to help the code run more smoothly.
+
+# Table 1: Candidate demographics and clinical characteristics by policy period
+```{r select_table_one_variables, warning = FALSE}
+setwd("C:/Users/julia/Google Drive/Pritzker/SRP/Codes/SAF SAS files")
+cand_thor <- haven::read_sas("cand_thor.sas7bdat", NULL)# loading in "cand_thor" 
+
+for_table_1 <- final_sample %>% 
+  filter(is.na(policy) == FALSE) %>%
+  filter(status != "Status 5") %>% 
+  dplyr::select(PX_ID,policy) %>%
+  left_join(cand_thor) %>%
+  filter(PX_ID %in% final_sample$PX_ID) %>%
+   mutate(age = CAN_AGE_AT_LISTING,
+         female = ifelse(CAN_GENDER == "F", "1", "0"),
+         race = factor(CAN_RACE),
+         race = fct_lump(race, n = 3),
+         race = fct_recode(race,
+                          "White" = "8",
+                          "Black" = "16",
+                          "Hispanic" = "2000", 
+                          "Other" = "Other"),
+         bmi = CAN_BMI,
+        simple_diagnosis = case_when(
+          CAN_DGN>999 & CAN_DGN<1007 ~ "Dilated cardiomyopathy, non-ischemic",
+          CAN_DGN == 1007 | CAN_DGN ==1200 ~ "Ischemic cardiomyopathy",
+          CAN_DGN>1048 & CAN_DGN< 1100 ~ "Restrictive cardiomyopathy",
+          TRUE ~ "Other"
+        ),
+        "Diagnosis" = factor(simple_diagnosis, 
+                           levels = c("Dilated cardiomyopathy, non-ischemic", 
+                                      "Ischemic cardiomyopathy", 
+                                      "Restrictive cardiomyopathy", 
+                                      "Other")),
+        diabetes = case_when(
+          CAN_DIAB_TY>1 & CAN_DIAB_TY<6 ~ "History of DM",
+          CAN_DIAB_TY ==1 ~ "Non-diabetic",
+          TRUE ~ "Unknown"
+        ),
+        diabetes = factor(diabetes),
+        female_gfr = if_else(CAN_GENDER == "F", 0.742, 1),
+        black_gfr = if_else(race == "Black", 1.21, 1),
+        eGFR = 175*((CAN_MOST_RECENT_CREAT)^(-1.154))*(CAN_AGE_AT_LISTING^(-0.203))*female_gfr*black_gfr,
+        functional_status = case_when(
+          CAN_FUNCTN_STAT == 1 | (CAN_FUNCTN_STAT>2069) ~
+            "Limited Impairment, 100-70%",
+          CAN_FUNCTN_STAT == 2 | (CAN_FUNCTN_STAT>2049 & CAN_FUNCTN_STAT<2061) ~ 
+            "Moderate Impairment, 50-60%",
+          CAN_FUNCTN_STAT == 3 | (CAN_FUNCTN_STAT>2000 & CAN_FUNCTN_STAT<2041) ~ as.character(expression("Severe Impairment,  \u2264 40%")),
+          TRUE ~ "Unknown"
+        ),
+        functional_status = ifelse(is.na(functional_status), "Unknown", functional_status),
+        functional_status = factor(functional_status),
+        pcwp = CAN_PCW_MEAN,
+        body_surface_area = 0.007184*(CAN_HGT_CM)^(0.725)*CAN_WGT_KG^(0.425),
+        cardiac_index = as.numeric(CAN_CARDIAC_OUTPUT/body_surface_area),
+        cardiac_index = ifelse(cardiac_index>10, NA, cardiac_index),
+        blood_type = factor(
+           case_when(
+             CAN_ABO %in% c("A", "A1", "A2") ~ "A",
+             CAN_ABO %in% c("A1B", "A2B") ~ "AB",
+             TRUE ~ CAN_ABO)
+           ),
+        payor = case_when(
+          CAN_PRIMARY_PAY %in% c(3,4,13) ~ "Medicare",
+          CAN_PRIMARY_PAY ==2 ~ "Medicaid",
+          CAN_PRIMARY_PAY == 1 ~ "Private",
+          TRUE ~ "Other"
+        ),
+        History_of_Smoking = case_when(
+           CAN_HIST_CIGARETTE == "Y" ~ "Smoking history",
+           CAN_HIST_CIGARETTE == "N" ~ "No prior smoking history"),
+        Working = case_when(
+           CAN_WORK_INCOME == "N" ~ "Not working",
+           CAN_WORK_INCOME == "Y" ~ "Working"),
+        Education_Status = case_when(
+          CAN_EDUCATION %in% c(4,5,6) ~ "College",
+          CAN_EDUCATION == 3 ~ "High School",
+          TRUE ~ "Less than high school or other"
+        ),
+  ) %>%
+  dplyr::select(PX_ID, policy, #patient ID and listing status
+         age, female, race, #basic demographics
+         History_of_Smoking, Working, Education_Status,
+         bmi, blood_type, "Diagnosis", eGFR, diabetes, functional_status, #diagnosis and medical comorbidities, some factor variables some continuous
+         cardiac_index, pcwp, #hemodynamics
+         payor, #payor
+         #ecmo, iabp, lvad, other_mcs, high_dose_inotropes, low_dose_inotropes #treatments- hot coded
+         ) %>%
+  mutate_if(is.character, factor) %>% 
+  mutate(bmi = substr(bmi, 0, 2)) %>% 
+  mutate(bmi = as.numeric(bmi))
+
+haven::write_dta(for_table_1, "for_table_1.dta")
+```
+
+```{r generate_table_1}
+
+var_label_list <- list(age = "Age at listing, yrs",
+                       female = "Female",
+                       race = "Race",
+                       History_of_Smoking = "Smoking history",
+                       Education_Status = "Education Status",
+                       bmi = "BMI, $kg/m^2$",
+                       blood_type = "Blood Type",
+                       diabetes = "Diabetes",
+                       functional_status= "Functional Status",
+                      cardiac_index = "Cardiac index,$ml/kg/m^2$",
+                      pcwp = "PCWP, mm Hg",
+                      payor = "Payor",
+                      Working = "Working for income",
+                      Diagnosis = "Diagnosis")
+
+labelled::var_label(for_table_1) <- var_label_list
+labelled::var_label(for_table_1)
+
+myvars <- names(for_table_1 %>% dplyr::select(-PX_ID, -policy))
+
+table1 <- CreateTableOne(vars = myvars, strata ="policy", data = for_table_1)
+
+table1_1 <- print(table1, padColnames = TRUE, varLabels = TRUE, dropEqual = TRUE, noSpaces = FALSE, catDigits = 0,  contDigits = 0, test = FALSE, dropEqual== TRUE, printToggle = FALSE)
+
+```
+
+# Adding CI to table 1
+```{r categorical variables CI}
+#period names
+pre_policy_period <-  "Dec 2016 - Feb 2018 (Pre-Policy)"
+post_policy_period <- "Dec 2018 - Feb 2020 (Post-policy)"
+pre_total <- for_table_1 %>% 
+  filter(policy == !! pre_policy_period) %>% 
+  nrow()
+post_total <- for_table_1 %>% 
+  filter(policy == !! post_policy_period) %>% 
+  nrow()
+
+#race
+
+race <- for_table_1 %>% 
+  select(race, policy) %>% 
+  group_by(race, policy) %>% 
+  summarise(count = n()) %>% 
+  spread(key = policy, value = count) %>% 
+  rename(pre = `Dec 2016 - Feb 2018 (Pre-Policy)`,
+         post = `Dec 2018 - Feb 2020 (Post-policy)`) %>% 
+  mutate(prop_pre = pre/pre_total,
+         prop_post = post/post_total,
+         se_diff = sqrt(
+           (prop_pre * (1-prop_pre)/pre_total)+
+             (prop_post *(1-prop_post)/post_total)
+           )*100,
+         pct_pre = prop_pre*100,
+         pct_post = prop_post*100,
+         abs_pct_diff = round(pct_post - pct_pre, 1),
+         low_ci = round(abs_pct_diff - 1.96*se_diff,1),
+         up_ci = round(abs_pct_diff + 1.96*se_diff,1),
+         ci = paste0("[", comma(low_ci), "% to ", comma(up_ci), "%]"),
+         change <- paste0(abs_pct_diff, " ", ci)
+         ) %>% 
+  rename(change = `change <- paste0(abs_pct_diff, " ", ci)`) %>% 
+  select(race, pre, post, change)
+  
+race <- for_table_1 %>% 
+  select(race, policy) %>% 
+  group_by(race, policy) %>% 
+  summarise(count = n()) %>% 
+  spread(key = policy, value = count) %>% 
+  rename(pre = `Dec 2016 - Feb 2018 (Pre-Policy)`,
+         post = `Dec 2018 - Feb 2020 (Post-policy)`) %>% 
+  ungroup() %>% 
+  mutate(prop_pre = pre/pre_total,
+         prop_post = post/post_total,
+         se_diff = sqrt(
+           (prop_pre * (1-prop_pre)/pre_total)+
+             (prop_post *(1-prop_post)/post_total)
+           )*100,
+         pct_pre = prop_pre*100,
+         pct_post = prop_post*100,
+         abs_pct_diff = round(pct_post - pct_pre, 1),
+         low_ci = round(abs_pct_diff - 1.96*se_diff,1),
+         up_ci = round(abs_pct_diff + 1.96*se_diff,1),
+         ci = paste0("[", comma(low_ci), "% to ", comma(up_ci), "%]"),
+         change <- paste0(abs_pct_diff, " ", ci)
+         ) %>% 
+  rename(change = `change <- paste0(abs_pct_diff, " ", ci)`) %>% 
+  select(race, pre, post, change)
+
+#female
+female <- for_table_1 %>% 
+  select(female, policy) %>% 
+  group_by(female, policy) %>% 
+  summarise(count = n()) %>% 
+  spread(key = policy, value = count) %>% 
+  rename(pre = `Dec 2016 - Feb 2018 (Pre-Policy)`,
+         post = `Dec 2018 - Feb 2020 (Post-policy)`) %>% 
+  ungroup() %>% 
+  mutate(prop_pre = pre/pre_total,
+         prop_post = post/post_total,
+         se_diff = sqrt(
+           (prop_pre * (1-prop_pre)/pre_total)+
+             (prop_post *(1-prop_post)/post_total)
+           )*100,
+         pct_pre = prop_pre*100,
+         pct_post = prop_post*100,
+         abs_pct_diff = round(pct_post - pct_pre, 1),
+         low_ci = round(abs_pct_diff - 1.96*se_diff,1),
+         up_ci = round(abs_pct_diff + 1.96*se_diff,1),
+         ci = paste0("[", comma(low_ci), "% to ", comma(up_ci), "%]"),
+         change <- paste0(abs_pct_diff, " ", ci)
+         ) %>% 
+  rename(change = `change <- paste0(abs_pct_diff, " ", ci)`) %>% 
+  select(female, pre, post, change)
+
+#smoking
+History_of_Smoking <- for_table_1 %>% 
+  select(History_of_Smoking, policy) %>% 
+  group_by(History_of_Smoking, policy) %>% 
+  summarise(count = n()) %>% 
+  spread(key = policy, value = count) %>%
+  rename(pre = `Dec 2016 - Feb 2018 (Pre-Policy)`,
+         post = `Dec 2018 - Feb 2020 (Post-policy)`) %>%
+  ungroup() %>% 
+  mutate(pre = ifelse(is.na(pre), 0, pre))%>% 
+  mutate(prop_pre = pre/pre_total,
+         prop_post = post/post_total,
+         se_diff = sqrt(
+           (prop_pre * (1-prop_pre)/pre_total)+
+             (prop_post *(1-prop_post)/post_total)
+           )*100,
+         pct_pre = prop_pre*100,
+         pct_post = prop_post*100,
+         abs_pct_diff = round(pct_post - pct_pre, 1),
+         low_ci = round(abs_pct_diff - 1.96*se_diff,1),
+         up_ci = round(abs_pct_diff + 1.96*se_diff,1),
+         ci = paste0("[", comma(low_ci), "% to ", comma(up_ci), "%]"),
+         change <- paste0(abs_pct_diff, " ", ci)
+         ) %>% 
+  rename(change = `change <- paste0(abs_pct_diff, " ", ci)`) %>% 
+  select(History_of_Smoking, pre, post, change) 
+
+Working <- for_table_1 %>% 
+  select(Working, policy) %>% 
+  group_by(Working, policy) %>% 
+  summarise(count = n()) %>% 
+  spread(key = policy, value = count) %>%
+  rename(pre = `Dec 2016 - Feb 2018 (Pre-Policy)`,
+         post = `Dec 2018 - Feb 2020 (Post-policy)`) %>%
+  ungroup() %>% 
+  mutate(pre = ifelse(is.na(pre), 0, pre),
+         post = ifelse(is.na(post),0,post))%>% 
+  mutate(prop_pre = pre/pre_total,
+         prop_post = post/post_total,
+         se_diff = sqrt(
+           (prop_pre * (1-prop_pre)/pre_total)+
+             (prop_post *(1-prop_post)/post_total)
+           )*100,
+         pct_pre = prop_pre*100,
+         pct_post = prop_post*100,
+         abs_pct_diff = round(pct_post - pct_pre, 1),
+         low_ci = round(abs_pct_diff - 1.96*se_diff,1),
+         up_ci = round(abs_pct_diff + 1.96*se_diff,1),
+         ci = paste0("[", comma(low_ci), "% to ", comma(up_ci), "%]"),
+         change <- paste0(abs_pct_diff, " ", ci)
+         ) %>% 
+  rename(change = `change <- paste0(abs_pct_diff, " ", ci)`) %>% 
+  select(Working, pre, post, change) 
+
+Education_Status <- for_table_1 %>% 
+  select(Education_Status, policy) %>% 
+  group_by(Education_Status, policy) %>% 
+  summarise(count = n()) %>% 
+  spread(key = policy, value = count) %>%
+  rename(pre = `Dec 2016 - Feb 2018 (Pre-Policy)`,
+         post = `Dec 2018 - Feb 2020 (Post-policy)`) %>%
+  ungroup() %>% 
+  mutate(pre = ifelse(is.na(pre), 0, pre),
+         post = ifelse(is.na(post),0,post))%>% 
+  mutate(prop_pre = pre/pre_total,
+         prop_post = post/post_total,
+         se_diff = sqrt(
+           (prop_pre * (1-prop_pre)/pre_total)+
+             (prop_post *(1-prop_post)/post_total)
+           )*100,
+         pct_pre = prop_pre*100,
+         pct_post = prop_post*100,
+         abs_pct_diff = round(pct_post - pct_pre, 1),
+         low_ci = round(abs_pct_diff - 1.96*se_diff,1),
+         up_ci = round(abs_pct_diff + 1.96*se_diff,1),
+         ci = paste0("[", comma(low_ci), "% to ", comma(up_ci), "%]"),
+         change <- paste0(abs_pct_diff, " ", ci)
+         ) %>% 
+  rename(change = `change <- paste0(abs_pct_diff, " ", ci)`) %>% 
+  select(Education_Status, pre, post, change) 
+
+blood_type <- for_table_1 %>% 
+  select(blood_type, policy) %>% 
+  group_by(blood_type, policy) %>% 
+  summarise(count = n()) %>% 
+  spread(key = policy, value = count) %>%
+  rename(pre = `Dec 2016 - Feb 2018 (Pre-Policy)`,
+         post = `Dec 2018 - Feb 2020 (Post-policy)`) %>%
+  ungroup() %>% 
+  mutate(pre = ifelse(is.na(pre), 0, pre),
+         post = ifelse(is.na(post),0,post))%>% 
+  mutate(prop_pre = pre/pre_total,
+         prop_post = post/post_total,
+         se_diff = sqrt(
+           (prop_pre * (1-prop_pre)/pre_total)+
+             (prop_post *(1-prop_post)/post_total)
+           )*100,
+         pct_pre = prop_pre*100,
+         pct_post = prop_post*100,
+         abs_pct_diff = round(pct_post - pct_pre, 1),
+         low_ci = round(abs_pct_diff - 1.96*se_diff,1),
+         up_ci = round(abs_pct_diff + 1.96*se_diff,1),
+         ci = paste0("[", comma(low_ci), "% to ", comma(up_ci), "%]"),
+         change <- paste0(abs_pct_diff, " ", ci)
+         ) %>% 
+  rename(change = `change <- paste0(abs_pct_diff, " ", ci)`) %>% 
+  select(blood_type, pre, post, change) 
+
+Diagnosis <- for_table_1 %>% 
+  select(Diagnosis, policy) %>% 
+  group_by(Diagnosis, policy) %>% 
+  summarise(count = n()) %>% 
+  spread(key = policy, value = count) %>%
+  rename(pre = `Dec 2016 - Feb 2018 (Pre-Policy)`,
+         post = `Dec 2018 - Feb 2020 (Post-policy)`) %>%
+  ungroup() %>% 
+  mutate(pre = ifelse(is.na(pre), 0, pre),
+         post = ifelse(is.na(post),0,post))%>% 
+  mutate(prop_pre = pre/pre_total,
+         prop_post = post/post_total,
+         se_diff = sqrt(
+           (prop_pre * (1-prop_pre)/pre_total)+
+             (prop_post *(1-prop_post)/post_total)
+           )*100,
+         pct_pre = prop_pre*100,
+         pct_post = prop_post*100,
+         abs_pct_diff = round(pct_post - pct_pre, 1),
+         low_ci = round(abs_pct_diff - 1.96*se_diff,1),
+         up_ci = round(abs_pct_diff + 1.96*se_diff,1),
+         ci = paste0("[", comma(low_ci), "% to ", comma(up_ci), "%]"),
+         change <- paste0(abs_pct_diff, " ", ci)
+         ) %>% 
+  rename(change = `change <- paste0(abs_pct_diff, " ", ci)`) %>% 
+  select(Diagnosis, pre, post, change) 
+
+diabetes <- for_table_1 %>% 
+  select(diabetes, policy) %>% 
+  group_by(diabetes, policy) %>% 
+  summarise(count = n()) %>% 
+  spread(key = policy, value = count) %>%
+  rename(pre = `Dec 2016 - Feb 2018 (Pre-Policy)`,
+         post = `Dec 2018 - Feb 2020 (Post-policy)`) %>%
+  ungroup() %>% 
+  mutate(pre = ifelse(is.na(pre), 0, pre),
+         post = ifelse(is.na(post),0,post))%>% 
+  mutate(prop_pre = pre/pre_total,
+         prop_post = post/post_total,
+         se_diff = sqrt(
+           (prop_pre * (1-prop_pre)/pre_total)+
+             (prop_post *(1-prop_post)/post_total)
+           )*100,
+         pct_pre = prop_pre*100,
+         pct_post = prop_post*100,
+         abs_pct_diff = round(pct_post - pct_pre, 1),
+         low_ci = round(abs_pct_diff - 1.96*se_diff,1),
+         up_ci = round(abs_pct_diff + 1.96*se_diff,1),
+         ci = paste0("[", comma(low_ci), "% to ", comma(up_ci), "%]"),
+         change <- paste0(abs_pct_diff, " ", ci)
+         ) %>% 
+  rename(change = `change <- paste0(abs_pct_diff, " ", ci)`) %>% 
+  select(diabetes, pre, post, change) 
+
+functional_status <- for_table_1 %>% 
+  select(functional_status, policy) %>% 
+  group_by(functional_status, policy) %>% 
+  summarise(count = n()) %>% 
+  spread(key = policy, value = count) %>%
+  rename(pre = `Dec 2016 - Feb 2018 (Pre-Policy)`,
+         post = `Dec 2018 - Feb 2020 (Post-policy)`) %>%
+  ungroup() %>% 
+  mutate(pre = ifelse(is.na(pre), 0, pre),
+         post = ifelse(is.na(post),0,post))%>% 
+  mutate(prop_pre = pre/pre_total,
+         prop_post = post/post_total,
+         se_diff = sqrt(
+           (prop_pre * (1-prop_pre)/pre_total)+
+             (prop_post *(1-prop_post)/post_total)
+           )*100,
+         pct_pre = prop_pre*100,
+         pct_post = prop_post*100,
+         abs_pct_diff = round(pct_post - pct_pre, 1),
+         low_ci = round(abs_pct_diff - 1.96*se_diff,1),
+         up_ci = round(abs_pct_diff + 1.96*se_diff,1),
+         ci = paste0("[", comma(low_ci), "% to ", comma(up_ci), "%]"),
+         change <- paste0(abs_pct_diff, " ", ci)
+         ) %>% 
+  rename(change = `change <- paste0(abs_pct_diff, " ", ci)`) %>% 
+  select(functional_status, pre, post, change) 
+
+payor <- for_table_1 %>% 
+  select(payor, policy) %>% 
+  group_by(payor, policy) %>% 
+  summarise(count = n()) %>% 
+  spread(key = policy, value = count) %>%
+  rename(pre = `Dec 2016 - Feb 2018 (Pre-Policy)`,
+         post = `Dec 2018 - Feb 2020 (Post-policy)`) %>%
+  ungroup() %>% 
+  mutate(pre = ifelse(is.na(pre), 0, pre),
+         post = ifelse(is.na(post),0,post))%>% 
+  mutate(prop_pre = pre/pre_total,
+         prop_post = post/post_total,
+         se_diff = sqrt(
+           (prop_pre * (1-prop_pre)/pre_total)+
+             (prop_post *(1-prop_post)/post_total)
+           )*100,
+         pct_pre = prop_pre*100,
+         pct_post = prop_post*100,
+         abs_pct_diff = round(pct_post - pct_pre, 1),
+         low_ci = round(abs_pct_diff - 1.96*se_diff,1),
+         up_ci = round(abs_pct_diff + 1.96*se_diff,1),
+         ci = paste0("[", comma(low_ci), "% to ", comma(up_ci), "%]"),
+         change <- paste0(abs_pct_diff, " ", ci)
+         ) %>% 
+  rename(change = `change <- paste0(abs_pct_diff, " ", ci)`) %>% 
+  select(payor, pre, post, change) 
+
+library(gridBase)
+library(gridExtra)
+library(ggplot2)
+
+Table_race <- tableGrob(race)
+Table_female <- tableGrob(female)
+Table_smoking <- tableGrob(History_of_Smoking)
+Table_work <- tableGrob(Working)
+Table_edu <- tableGrob(Education_Status)
+Table_blood <- tableGrob(blood_type)
+Table_diag <- tableGrob(Diagnosis)
+Table_diab <- tableGrob(diabetes)
+Table_fs <- tableGrob(functional_status)
+Table_payor<- tableGrob(payor)
+
+pdf("file.pdf", height = 12, width = 20)
+grid.arrange(Table_race, Table_female, Table_smoking, Table_work, Table_edu, Table_blood, Table_diag, Table_diab, Table_fs, Table_payor, ncol = 2, nrow = 5)
+dev.off()
+
+```
+
+```{r raw mean difference for continuous variables}
+bmi <- for_table_1 %>% 
+  select(bmi, policy) %>% 
+  mutate(bmi = as.numeric(bmi)) %>% 
+  group_by(policy) %>% 
+  summarise(mean_bmi = mean(bmi,na.rm=TRUE), sd = sd(bmi, na.rm= TRUE),count = n()) %>%
+  mutate(mean_bmi = round(mean_bmi,2),
+         sd  = round(sd,2)) %>% 
+  ungroup() %>%
+  mutate(diff = round(mean_bmi - lag(mean_bmi, default = mean_bmi[1]),2),
+         var = (sd^2)/count,
+         se_diff = round(sqrt(sum(var)),2),
+         policy = ifelse(policy == "Dec 2016 - Feb 2018 (Pre-Policy)", "pre", "post")
+         )  %>% 
+  filter(policy =="post") %>% 
+  select(diff,se_diff) %>% 
+  mutate(low_ci = round(diff - 1.96*se_diff,2),
+         up_ci = round(diff + 1.96*se_diff,2),
+         ci = paste0("[", comma(low_ci), " to ", comma(up_ci), "]"),
+         change <- paste0(diff, " ", ci)
+         )
+
+age <- for_table_1 %>% 
+  select(age, policy) %>% 
+  mutate(age = as.numeric(age)) %>% 
+  group_by(policy) %>% 
+  summarise(mean_age = mean(age,na.rm=TRUE), sd = sd(age, na.rm= TRUE),count = n()) %>%
+  ungroup() %>%
+  mutate(diff = round(mean_age - lag(mean_age, default = mean_age[1]),1),
+         var = (sd^2)/count,
+         se_diff = round(sqrt(sum(var)),1),
+         policy = ifelse(policy == "Dec 2016 - Feb 2018 (Pre-Policy)", "pre", "post")
+         )  %>% 
+  filter(policy =="post") %>% 
+  select(diff,se_diff) %>% 
+  mutate(low_ci = round(diff - 1.96*se_diff,1),
+         up_ci = round(diff + 1.96*se_diff,1),
+         ci = paste0("[", comma(low_ci), " to ", comma(up_ci), "]"),
+         change <- paste0(diff, " ", ci)
+         )
+
+
+eGFR <- for_table_1 %>% 
+  select(eGFR, policy) %>% 
+  mutate(eGFR = as.numeric(eGFR)) %>% 
+  group_by(policy) %>% 
+  summarise(mean_eGFR = mean(eGFR,na.rm=TRUE), sd = sd(eGFR, na.rm= TRUE),count = n()) %>%
+  ungroup() %>%
+  mutate(diff = round(mean_eGFR - lag(mean_eGFR, default = mean_eGFR[1]),1),
+         var = (sd^2)/count,
+         se_diff = round(sqrt(sum(var)),1),
+         policy = ifelse(policy == "Dec 2016 - Feb 2018 (Pre-Policy)", "pre", "post")
+         )  %>% 
+  filter(policy =="post") %>% 
+  select(diff,se_diff) %>% 
+  mutate(low_ci = round(diff - 1.96*se_diff,1),
+         up_ci = round(diff + 1.96*se_diff,1),
+         ci = paste0("[", comma(low_ci), " to ", comma(up_ci), "]"),
+         change <- paste0(diff, " ", ci)
+         )
+
+
+ci <- for_table_1 %>%   
+  select(cardiac_index, policy) %>%  
+  mutate(cardiac_index = as.numeric(cardiac_index)) %>% 
+  group_by(policy) %>%   
+  summarise(mean_ci = mean(cardiac_index,na.rm=TRUE), sd = sd(cardiac_index, na.rm= TRUE),count = n()) %>%
+  ungroup() %>%
+  mutate(mean_ci = round(mean_ci, 2)) %>% 
+  mutate(diff = round(mean_ci - lag(mean_ci, default = mean_ci[1]),2),
+         var = (sd^2)/count,
+         se_diff = round(sqrt(sum(var)),2),
+         policy = ifelse(policy == "Dec 2016 - Feb 2018 (Pre-Policy)", "pre", "post")
+         )  %>% 
+  filter(policy =="post") %>% 
+  select(diff,se_diff) %>% 
+  mutate(low_ci = round(diff - 1.96*se_diff,2),
+         up_ci = round(diff + 1.96*se_diff,2),
+         ci = paste0("[", comma(low_ci), " to ", comma(up_ci), "]"),
+         change <- paste0(diff, " ", ci))
+
+
+pcwp <- for_table_1 %>%   
+  select(pcwp, policy) %>%  
+  mutate(pcwp = as.numeric(pcwp)) %>% 
+  group_by(policy) %>%   
+  summarise(mean_pcwp = mean(pcwp,na.rm=TRUE), sd = sd(pcwp, na.rm= TRUE),count = n()) %>%
+  ungroup() %>%
+  mutate(diff = round(mean_pcwp - lag(mean_pcwp, default = mean_pcwp[1]),1),
+         var = (sd^2)/count,
+         se_diff = round(sqrt(sum(var)),1),
+         policy = ifelse(policy == "Dec 2016 - Feb 2018 (Pre-Policy)", "pre", "post")
+         )  %>% 
+  filter(policy =="post") %>% 
+  select(diff,se_diff) %>% 
+  mutate(low_ci = round(diff - 1.96*se_diff,1),
+         up_ci = round(diff + 1.96*se_diff,1),
+         ci = paste0("[", comma(low_ci), " to ", comma(up_ci), "]"),
+         change <- paste0(diff, " ", ci))
+```

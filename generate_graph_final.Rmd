@@ -1,0 +1,948 @@
+---
+title: Generate Graphs for Geographical Variances in Practice Changes Post New Adult Heart Allocation Policy*
+author: "Julia Ran, William Parker"
+output:
+  rmdformats::material:
+    highlight: tango
+  html_document:
+    theme: cosmo
+    toc: yes
+---
+
+
+# Loading in packages 
+
+This chunk is used to load in the packages in R that help us to tidy, manipulate, and visualize the data. 
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+require("knitr")
+opts_knit$set(root.dir = "C:/Users/julia/Google Drive/Pritzker/SRP/Codes/SAF SAS files")
+
+```
+
+
+```{r Load Packages}
+library("ggplot2")  
+library("tidyverse")
+library("haven")
+library("rmdformats")
+library("ggthemes")
+library("dplyr")
+library("tidyselect")
+library(extrafont)
+loadfonts(device = "win") 
+library(lubridate) # for working with dates
+
+
+```
+
+# Load dataset
+```{r load data}
+final_sample <- read.csv("C:/Users/julia/Google Drive/Pritzker/SRP/Codes/SAF SAS files/final_sample.csv")
+
+prop_map <- read.csv("C:/Users/julia/Google Drive/Pritzker/SRP/Codes/data_codes/prop_map.csv") %>% 
+  rename(PROP_TX_S1A = prop_tx_s1a1) %>% 
+  select(ctr_cd, served_opo_cd, PROP_TX_S1A, policy_factor) %>% 
+  filter(policy_factor =="Pre")
+
+```
+
+# Set color scheme
+```{r color scheme}
+custom_colors <- c(
+  `dark red` = "#660000",
+  `bright red` = "#b81d2e",
+  `orange` = "#ae6320",
+  `yellow`= "#b8a370",
+  `green`     = "#3ba9a9",
+  `grey` = "#C3C1C1",
+  `light green` = "#8dd9d7",
+  `light yellow` = "#ddd3bb",
+  `light orange` = "#e49f62",
+  `space sparkle`= "#496061",
+  `violet` = "#7A3DE3",
+  `sandy brown` = "#FA9E4D")
+
+custom_col <- function(...) {
+  cols <- c(...)
+
+  if (is.null(cols))
+    return (drsimonj_colors)
+
+  custom_colors[cols]
+}
+
+custom_palettes <- list(
+  `main`  = custom_col("green", "yellow", "dark red"),
+
+  `cool`  = custom_col("green", "yellow","orange"),
+
+  `hot`   = custom_col("yellow", "orange", "dark red"),
+
+  `mixed` = custom_col("green", "yellow", "orange", "bright red", "dark red"),
+  
+  `distinct` = custom_col("dark red", "bright red", "light yellow", "green","grey"),
+  
+  `distinct1` = custom_col("dark red", "bright red",  "green","light yellow","grey"), 
+  
+  `bar` = custom_col("green", "grey", "yellow", "orange", "bright red", "dark red"),
+  
+  `treatment` = custom_col("dark red","green", "space sparkle", "orange", "violet","yellow","sandy brown","bright red") ,
+  
+  `exception` = custom_col("dark red", "orange", "bright red", "green")
+)
+
+custom_pal <- function(palette = "main", reverse = FALSE, ...) {
+  pal <- custom_palettes[[palette]]
+
+  if (reverse) pal <- rev(pal)
+
+  colorRampPalette(pal, ...)
+}
+
+scale_color_custom <- function(palette = "mixed", discrete = TRUE, reverse = FALSE, ...) {
+  pal <- custom_pal(palette = palette, reverse = reverse)
+
+  if (discrete) {
+    discrete_scale("colour", paste0("custom_", palette), palette = pal, ...)
+  } else {
+    scale_color_gradientn(colours = pal(256), ...)
+  }
+}
+
+scale_fill_custom <- function(palette = "mixed", discrete = TRUE, reverse = FALSE, ...) {
+  pal <- custom_pal(palette = palette, reverse = reverse)
+
+  if (discrete) {
+    discrete_scale("fill", paste0("custom_", palette), palette = pal, ...)
+  } else {
+    scale_fill_gradientn(colours = pal(256), ...)
+  }
+}
+
+```
+
+
+# Figure 2A - Monthly Listing over time, by status
+```{r absolute numbers status}
+finalset <- final_sample %>%
+  mutate(month = zoo::as.yearmon(list_date),
+         status = factor(status,
+                            levels = c("Status 1", "Status 2",
+                                       "Status 3", "Status 4","Status 5",
+                                       "Status 6"))) %>% 
+  filter(status!="Status 5")
+
+by_month <- finalset %>%
+  group_by(policy, month) %>%
+  count(status) %>%
+  mutate(total_per_month = sum(n)) %>%
+    ungroup () %>%
+  mutate(month1 = factor(month),
+         percentage_per_month = 100*n/total_per_month) 
+
+policy_switch <- which(levels(by_month$month1) == "Oct 2018")
+pre_policy_start <- which(levels(by_month$month1) == "Dec 2016")
+pre_policy_end <- which(levels(by_month$month1) == "Feb 2018")
+post_policy_start <- which(levels(by_month$month1) == "Dec 2018")
+post_policy_end <- which(levels(by_month$month1) == "Feb 2020")
+
+
+figure2 <- ggplot(by_month, aes(x = month1, 
+                     y = n, 
+                     color = status, 
+                     group = status)) +
+  geom_line() + 
+  geom_point() +
+  geom_vline(aes(xintercept = policy_switch,linetype = "Policy Switch")) + 
+  scale_color_custom(name = "Status",palette = "distinct1") +
+  labs(
+    x = "Month of listing",
+    y = "Number of candidates listed",
+    linetype = "",
+    color = "status") +
+    theme_few() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, family = "Calibri Light",size = 8),
+          axis.title.x = element_text(margin = margin(t = 15, r = 0, b = 0, l = 0), family = "Calibri Light"),
+          axis.title.y = element_text(family = "Calibri Light"),
+          axis.text = element_text(family="Calibri Light"),
+          legend.position = "right",
+          legend.title = element_text(size = 10, family = "Calibri Light"),
+          legend.text = element_text(size = 10, family = "Calibri Light"),
+          legend.margin = margin(t=0,r=0,b=0,l=0, unit = "mm"),
+          legend.direction = "vertical",
+          legend.title.align = 0,
+          panel.background = element_rect(fill = "grey99"),
+          plot.background = element_rect(fill = "white"),
+          panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          axis.line = element_line(size = 0.5, linetype = "solid",colour = "black")
+          ) +
+  scale_linetype_manual(values = c("dashed", "dotted", "solid")) +
+  scale_fill_manual(values = c("grey30", "grey80")) +
+  annotate("text", x = which(levels(by_month$month1)== "Jul 2017"), y = 180, label= "Pre-policy cohort", family = "Calibri Light") +
+  annotate("text", x = which(levels(by_month$month1)== "Jul 2019"), y = 180, label= "Post-policy cohort",family = "Calibri Light") +
+  annotate("rect",
+           xmin = which(levels(by_month$month1)== "Dec 2016"),           
+           xmax = which(levels(by_month$month1)== "Feb 2018"),
+           ymin = 0, 
+           ymax = 175,  
+           alpha = 0.1)+
+  annotate("rect",
+           xmin = which(levels(by_month$month1)== "Dec 2018"),            
+           xmax = which(levels(by_month$month1)== "Feb 2020"),            
+           ymin = 0, ymax = 175, alpha = 0.1)
+
+ggsave("C:/Users/julia/Google Drive/Pritzker/SRP/Drafts/Figures/figure2.tiff", figure2, dpi = "print", width = 7.29, height = 4.51)
+
+```
+
+# Figure 2B - Monthly treatments in high-prioirty statuses
+
+```{r trends in justification}
+finalset3 <- final_sample %>%
+  mutate(month = zoo::as.yearmon(list_date),
+         status = factor(status,
+                            levels = c("Status 1", "Status 2",
+                                       "Status 3", "Status 4","Status 5", "Status 6"))) %>% 
+  filter(status_1a == "TRUE") %>% 
+  filter(status == "Status 1" | status == "Status 2" | treatment == "Exception")  %>% 
+  select(month, treatment) %>% 
+  group_by(month,treatment) %>% 
+  count(treatment) %>% 
+  ungroup() %>% 
+  select(month, treatment, n)
+
+finalset4 <- final_sample %>%
+  mutate(month = zoo::as.yearmon(list_date),
+         status = factor(status,
+                            levels = c("Status 1", "Status 2",
+                                       "Status 3", "Status 4","Status 5", "Status 6"))) %>% 
+  filter(status== "Status 1" | status == "Status 2")  %>% 
+  filter(status_1a == "FALSE") %>% 
+  select(month, treatment) %>% 
+  group_by(month, treatment) %>% 
+  count(treatment) %>% 
+  ungroup() %>% 
+  select(month, treatment, n) 
+  
+by_month2 <- finalset3 %>% 
+  bind_rows(finalset4) %>% 
+  mutate(month1 = factor(month))
+
+policy_switch <- which(levels(by_month2$month1) == "Oct 2018")
+pre_policy_start <- which(levels(by_month2$month1) == "Dec 2016")
+pre_policy_end <- which(levels(by_month2$month1) == "Feb 2018")
+post_policy_start <- which(levels(by_month2$month1) == "Dec 2018")
+post_policy_end <- which(levels(by_month2$month1) == "Feb 2020")
+
+figure2b_4 <- ggplot(by_month2, aes(x = month1, 
+                     y = n, 
+                     color = treatment, 
+                     group = treatment)) +
+  geom_line() + 
+  geom_point() +
+  geom_vline(aes(xintercept = policy_switch,linetype = "Policy Switch")) + 
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    x = "Month of listing",
+    y = "Number of candidates listed",
+    linetype = "",
+    color = "Treatment") +
+    theme_few() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, family = "Calibri Light", size = 8),
+          axis.title.x = element_text(margin = margin(t = 15, r = 0, b = 0, l = 0), family = "Calibri Light"),
+          axis.title.y = element_text(family = "Calibri Light"),
+          axis.text = element_text(family="Calibri Light"),
+          legend.position = "right",
+          legend.title = element_text(size = 10, family = "Calibri Light"),
+          legend.text = element_text(size = 10, family = "Calibri Light"),
+          legend.margin = margin(t=0,r=0,b=0,l=0, unit = "mm"),
+          legend.direction = "vertical",
+          legend.title.align = 0,
+          panel.background = element_rect(fill = "grey99"),
+          plot.background = element_rect(fill = "white"),
+          panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          axis.line = element_line(size = 0.5, linetype = "solid",colour = "black")
+          ) +
+  scale_linetype_manual(values = c("dashed", "dotted", "solid")) +
+  scale_fill_manual(values = c("grey30", "grey80")) +
+  annotate("text", x = which(levels(by_month2$month1)== "Jul 2017"), y = 51, label= "Pre-policy cohort", family = "Calibri Light") +
+  annotate("text", x = which(levels(by_month2$month1)== "Jul 2019"), y = 51, label= "Post-policy cohort",family = "Calibri Light") +
+  annotate("rect",
+           xmin = which(levels(by_month2$month1)== "Dec 2016"),           
+           xmax = which(levels(by_month2$month1)== "Feb 2018"),
+           ymin = 0, 
+           ymax = 50,  
+           alpha = 0.1)+
+  annotate("rect",
+           xmin = which(levels(by_month2$month1)== "Dec 2018"),            
+           xmax = which(levels(by_month2$month1)== "Feb 2020"),            
+           ymin = 0, 
+           ymax = 50, alpha = 0.1)
+
+ggsave("C:/Users/julia/Google Drive/Pritzker/SRP/Drafts/Figures/figure2b_4.tiff", figure2b_4, dpi = "print", width = 7.29, height = 4.51)
+
+```
+
+# Figure 3 - Stacked Caterpillar Plot
+
+```{r }
+me_results <- read.csv("C:/Users/julia/Google Drive/Pritzker/SRP/Codes/data_codes/high_stata_output1.csv")
+
+pre_policy_rate <- mean(filter(me_results, policy_factor == "Pre")$high_status)
+
+post_policy_rate <- mean(filter(me_results, policy_factor == "Post")$high_status)
+
+
+low_ci_binom <- function(x,n){
+  binom.test(x, n)$conf.int[1]
+}
+
+up_ci_binom<- function(x,n){
+  binom.test(x, n)$conf.int[2]
+}
+
+mean_rates <- me_results %>%
+  mutate(
+         p = 1/(1 + exp(-xb_predicted)),
+         e = 1/(1 + exp(-xb_expected))) %>%
+  group_by(ctr_cd, policy_factor) %>%
+  summarise(unadjusted_rate = mean(high_status),
+            sum_p = sum(p),
+            sum_e = sum(e),
+            n = n()) %>%
+  mutate(o_e_ratio = sum_p/sum_e,
+         adjusted_rate = case_when(
+           policy_factor == "Pre" ~ o_e_ratio*pre_policy_rate,
+           TRUE ~ o_e_ratio*post_policy_rate)
+         ) %>%
+  select(ctr_cd, policy_factor, n, unadjusted_rate, adjusted_rate) %>%
+  ungroup() %>%
+  mutate(p_events = round(adjusted_rate*n),
+         observed_events = round(unadjusted_rate*n))
+
+low_ci <- map2_dbl(mean_rates$p_events, mean_rates$n, low_ci_binom)
+up_ci <- map2_dbl(mean_rates$p_events, mean_rates$n, up_ci_binom)
+low_ci_unadj <- map2_dbl(mean_rates$observed_events, mean_rates$n, low_ci_binom)
+up_ci_unadj <- map2_dbl(mean_rates$observed_events, mean_rates$n, up_ci_binom)
+
+mean_rates <- mean_rates  %>%
+  cbind(low_ci, up_ci, low_ci_unadj, up_ci_unadj)
+
+```
+
+```{r center_rates, warning=FALSE, message=FALSE}
+setwd("C:/Users/julia/Google Drive/Pritzker/SRP/Codes/data_codes/bootstrap_results")
+
+file_list <- list.files(path="C:/Users/julia/Google Drive/Pritzker/SRP/Codes/data_codes/bootstrap_results")
+
+
+center_rates <- tibble()
+for (i in 1:length(file_list)){
+  center_rates  <- center_rates  %>% 
+    rbind(read_csv(paste0("C:/Users/julia/Google Drive/Pritzker/SRP/Codes/data_codes/bootstrap_results/",file_list[i])))
+}
+
+low_ci <- function(x) quantile(x, na.rm = TRUE, probs = 0.025)[[1]]
+up_ci <- function(x) quantile(x, na.rm = TRUE, probs = 0.975)[[1]]
+center_rates <- center_rates %>%
+  rbind(mean_rates %>% select(ctr_cd, policy_factor, adjusted_rate)) %>%
+  group_by(ctr_cd, policy_factor) %>%
+  filter(is.na(policy_factor) == FALSE) %>%
+  left_join(mean_rates %>% select(ctr_cd, policy_factor, low_ci, up_ci)) %>% 
+  filter( adjusted_rate> low_ci & adjusted_rate < up_ci) %>%  #throw out boostrapped rates beyond the binomial 95% CI
+  summarise(
+            low_ci_bs = low_ci(adjusted_rate),
+            up_ci_bs = up_ci(adjusted_rate),
+            se = sd(adjusted_rate),
+            mean_bs_rate = mean(adjusted_rate, na.rm = TRUE)) %>%
+  left_join(mean_rates %>% select(ctr_cd, policy_factor, adjusted_rate)) %>%
+  mutate(low_ci = adjusted_rate - 1.96*se,
+         up_ci = adjusted_rate + 1.96*se,
+         low_ci = ifelse(low_ci < 0, low_ci_bs, low_ci)
+    ) %>% 
+  ungroup()
+
+center_ranks <- center_rates  %>%
+  ungroup() %>% 
+  filter(policy_factor == "Post") %>%
+  arrange(adjusted_rate) %>%
+  mutate(rank = row_number()) %>%
+  select(ctr_cd, rank)
+
+significance <- center_rates %>%
+  select(ctr_cd, policy_factor, adjusted_rate, low_ci, up_ci, se) %>%
+  pivot_wider(names_from = policy_factor, values_from = c(adjusted_rate, low_ci, up_ci, se)) %>%
+  mutate(z_stat = abs(adjusted_rate_Post - adjusted_rate_Pre)/sqrt(se_Post^2 + se_Pre^2),
+         sig1 = case_when(
+           z_stat > 1.96 ~ "*",
+           TRUE ~ " ")
+  ) %>% select(ctr_cd, sig1)
+
+to_plot <- center_rates %>% 
+  left_join(center_ranks) %>%
+  left_join(significance) %>%
+  mutate(y_sig = ifelse(policy_factor == "Post",up_ci + 0.05, NA)) %>% 
+  mutate(policy_factor = ifelse(policy_factor == "Pre", "1","2"))
+
+write.csv(to_plot, "C:/Users/julia/Google Drive/Pritzker/SRP/Codes/data_codes/figure_2_CMS.csv", row.names = FALSE)
+
+figure3_CMS <- ggplot(to_plot, aes(x = rank)) +
+  geom_errorbar(aes(ymin = low_ci,
+             ymax = up_ci,
+             color = policy_factor),alpha = 0.75) +
+  geom_point(aes(y =adjusted_rate, color = policy_factor)) + 
+  geom_text(aes(y = y_sig, label = sig1), size = 4) +
+  #geom_hline(aes(yintercept = post_policy_rate, linetype = "Post-policy average")) +
+  #geom_hline(aes(yintercept = pre_policy_rate, linetype = "Pre-policy average")) + 
+  scale_linetype_manual(values = c("dashed", "dotted")) +
+  theme_classic() +
+  labs(y = "Probability of High Status Listing (%)") + 
+  theme(legend.position = "bottom") +
+  scale_color_manual(name = "Policy Period",
+                     values = c("#3BA9A9","#660000"),
+                     labels = c("Dec 2016 - Feb 2018","Dec 2018 - Feb 2020"),
+                     guide = "legend") +
+    theme(plot.margin=unit(c(5,5,5,5),"mm")) +
+  theme(axis.title.x = element_text(size=12,family = "Calibri Light"), 
+        axis.title.y = element_text(size=12,family = "Calibri Light", angle=90), 
+        legend.title=element_text(size=12,family = "Calibri Light"),
+        legend.text=element_text(size=12,family = "Calibri Light"),
+        legend.position="bottom",
+        legend.margin = margin(t=-1, r=0, b=-1, l=0, unit="mm"),
+        legend.background = element_blank())
+
+
+figure3_CMS1 <- ggplot(to_plot, aes(x = rank)) +
+  geom_errorbar(aes(ymin = low_ci,
+             ymax = up_ci,
+             color = policy_factor),alpha = 0.75) +
+  geom_point(aes(y =adjusted_rate, color = policy_factor)) + 
+  geom_text(aes(y = y_sig, label = sig1), size = 4) +
+  #geom_hline(aes(yintercept = post_policy_rate, linetype = "Post-policy average")) +
+  #geom_hline(aes(yintercept = pre_policy_rate, linetype = "Pre-policy average")) + 
+  scale_linetype_manual(values = c("dashed", "dotted")) +
+  theme_classic() +
+  labs(y = "Probability of High Status Listing (%)",
+       x = "Transplant Center") + 
+  theme(legend.position = "bottom") +
+  scale_color_manual(name = "Policy Period",
+                     values = c("#3BA9A9","#660000"),
+                     labels = c("Expected","Observed"),
+                     guide = "legend") +
+    theme(plot.margin=unit(c(5,5,5,5),"mm")) +
+  theme(axis.title.x = element_text(size=12,family = "Calibri Light"), 
+        axis.title.y = element_text(size=12,family = "Calibri Light", angle=90), 
+        legend.title=element_text(size=12,family = "Calibri Light"),
+        legend.text=element_text(size=12,family = "Calibri Light"),
+        legend.position="bottom",
+        legend.margin = margin(t=-1, r=0, b=-1, l=0, unit="mm"),
+        legend.background = element_blank())
+
+ggsave("C:/Users/julia/Google Drive/Pritzker/SRP/Drafts/Figures/figure3_CMS1.tiff", figure3_CMS1, dpi = "print", width = 7.29, height = 5.51)
+```
+
+# Figure 4 - Map
+
+```{r load additional mapping packages}
+library("sf")
+library(tidyverse)
+library(censusapi)
+library(tidyselect)
+library(tidyr)
+library(ggplot2)
+library(tigris)
+library(tidycensus,options(tigris_use_cache = TRUE))
+
+```
+
+```{r load map and geo files}
+setwd("C:/Users/julia/Google Drive/Pritzker/SRP/Codes/SAF SAS files")
+institutions <- haven::read_sas("institution.sas7bdat")
+
+counties <- get_acs(geography = "county", 
+                    variables ='B00001_001E', 
+                    geometry = TRUE,
+                    year = 2015,
+                    key = "27e4037b2223bcb6e69ac64b1b6984e4c56d13a9",
+                    show_call = TRUE)
+
+# states <- get_acs(geography = "state",
+#                   variables = "B01001_001E",
+#                   geometry = TRUE,
+#                   key = "27e4037b2223bcb6e69ac64b1b6984e4c56d13a9",
+#                   show_call = TRUE) %>% 
+#   rename(state_name = NAME)
+
+#county to zip to county to state dataset. 
+zip_county_state <- read_csv("C:/Users/julia/Google Drive/Pritzker/SRP/Codes/data_codes/srp/zip_county_state.csv") %>%
+  mutate(zip = as.numeric(ZIP))
+
+center_geocodes <- read_csv("C:/Users/julia/Google Drive/Pritzker/SRP/Codes/data_codes/srp/center_geocodes.csv")
+
+#map counties to OPOs
+county2opo <- read.csv("C:/Users/julia/Google Drive/Pritzker/SRP/Codes/data_codes/srp/county2opo.csv", colClasses = "character") %>% 
+  rename(GEOID = county_fips,
+         state_name = ï..state_name) %>% 
+  filter(state_name != "Alaska" & state_name != "Hawaii") %>% 
+  filter(OPO != "PRLL") %>% 
+  arrange(GEOID) %>% 
+  mutate(GEO_ID_num= as.numeric(GEOID),
+    GEO_ID = case_when(
+    GEO_ID_num<10000 ~ paste0("0", GEOID),
+    GEO_ID_num>10000 ~ GEOID
+  )) %>% 
+  dplyr::select(-GEOID, -GEO_ID_num) %>% 
+  rename(GEOID = GEO_ID)
+
+#map transplant centers to OPOs
+ctr2opo <- read.csv("C:/Users/julia/Google Drive/Pritzker/SRP/Codes/SAF SAS files/final_sample.csv") %>%   dplyr::select(CTR_CD, SERVED_OPO_CD) %>% 
+  distinct() %>% 
+  rename(ctr_cd = CTR_CD,
+         OPO = SERVED_OPO_CD)
+
+ctr2county <- county2opo %>% 
+  left_join(ctr2opo,by="OPO") %>% 
+  dplyr::select(-OPO)
+
+#Link transplant center estimates of high-priority status listing to the names of OPOs
+proportions_map <- model_high_clean %>% 
+  left_join(ctr2opo,by="ctr_cd") 
+
+##shannon county rename
+county2opo$GEOID[county2opo$GEOID =="46113"] <- "46102"
+ctr2county$GEOID[county2opo$GEOID =="46113"] <- "46102"
+
+```
+
+```{r load data}
+CMS_adjusted <- read_csv("C:/Users/julia/Google Drive/Pritzker/SRP/Codes/data_codes/CMS_adjusted_rates.csv")
+```
+
+```{r create map}
+proportions_map_CMS <- CMS_adjusted %>% 
+  left_join(ctr2opo,by="ctr_cd")
+
+opo_rates <- proportions_map_CMS %>%
+  group_by(OPO, policy_factor) %>%
+    mutate(weighted_pct = adjusted_rate*n) %>%
+  summarise(sum_weights = sum(weighted_pct),
+           total_count = sum(n),
+           OPO_rate = sum_weights/total_count) %>%
+  select(OPO, policy_factor, OPO_rate)
+
+#find boundaries for opos
+
+opo_shapes2 <- left_join(counties, county2opo, by = "GEOID") %>%
+  filter(!is.na(OPO)) %>% 
+  group_by(OPO) %>% 
+  summarise(geometry = st_union(geometry)) %>% 
+  ungroup()
+
+#add rates
+opo_shapes_CMS <- opo_shapes2 %>% 
+  left_join(opo_rates) %>%
+  mutate(to_replicate = ifelse(is.na(policy_factor) == TRUE, 2, 1)) %>%
+  uncount(to_replicate) %>%
+  ungroup() %>%
+  group_by(OPO) %>%
+  mutate(ob_num = row_number()) %>%
+  mutate(policy_factor = case_when(
+    is.na(policy_factor) & ob_num == 1 ~"Post",
+    is.na(policy_factor) & ob_num == 2 ~"Pre",
+    TRUE ~ policy_factor)) %>%
+  mutate(policy_factor = ifelse(policy_factor == "Pre", "Expected", "Observed")) 
+
+figure4_2 <- ggplot() + 
+  geom_sf(data = opo_shapes_CMS, aes(fill = 100*OPO_rate, geometry = geometry),colour = "white",shape = 5) + 
+  coord_sf(xlim=c(-125,-65), ylim=c(24.5,50), expand = FALSE) +
+  scale_fill_custom(name = "Unit: %", discrete = FALSE)+
+  theme_void() +
+  guides(element_blank()) +
+    theme(legend.title = element_text(size = 10, family = "Calibri Light"),
+        legend.text=element_text(size=10,family = "Calibri Light"),
+        legend.position = "bottom",
+        legend.key.height = unit(3,"mm"),
+        legend.key.width = unit(10,"mm"),
+        legend.margin = margin(t=0, r=0, b=0, l=0, unit="cm"),
+        legend.background = element_blank()
+        ) +
+  theme(plot.margin=unit(c(0,2,0,2),"mm"),
+        aspect.ratio = 0.55) +
+  facet_grid(cols = vars(as.factor(policy_factor))) +
+        theme(strip.background = element_rect(fill="grey50",
+                                        colour="grey50",
+                                        size = unit(10,"mm")),
+              strip.text = element_text(size=12, colour="white",family = "Calibri Light"),              strip.text.x = element_text(margin = margin(b=3,t=1)))
+
+ggsave("C:/Users/julia/Google Drive/Pritzker/SRP/Drafts/Figures/figure4_2.tiff", figure4_2, dpi = "print",width=7.29, height = 3)
+
+```
+
+# Supplement Figure 1 - Flow Chart
+
+```{r Figure 1 Flow Chart}
+data <- tibble (x=1:100, y=1:100)
+
+blank <- data %>% 
+  ggplot(aes(x, y)) +
+  scale_x_continuous(minor_breaks = seq(1, 100, 1)) +
+  scale_y_continuous(minor_breaks = seq(1, 200, 1)) +
+  theme_minimal()
+
+figure1 <- blank + 
+  geom_rect(xmin = 20,
+            xmax = 80,
+            ymin = 85,
+            ymax = 100,
+            color = "white",
+            fill = "#c4e5e5",
+            size = 0.25,
+            size= 0.25) +
+  annotate ("text",
+            x=50,
+            y=93,
+            label = paste0("Incident adult heart transplant candidates from Dec 2016 to Feb 2020 \n", "(n = 12,904)"),
+            colour = "grey20",
+            family = "Calibri Light",
+            size = 5) +
+  geom_rect(xmin = 20,
+            xmax = 80,
+            ymin = 45,
+            ymax = 60,
+            color = "white",
+            fill = "#c4e5e5",
+            size = 0.25,
+            size= 0.25) +
+  annotate ("text",
+            x=50,
+            y=53,
+            label = paste0("Active candidates \n", "(n = 12,502)"),
+            colour = "grey20",
+            family = "Calibri Light",
+            size = 5) +
+  geom_rect(xmin = 0,
+            xmax = 44,
+            ymin = 0,
+            ymax = 15,
+            color = "white",
+            fill = "#c4e5e5",
+            size = 0.25,
+            size= 0.25) +
+  annotate ("text",
+            x=22,
+            y=7.5,
+            label = paste0("Pre-policy cohort \n", "Dec 1, 2016 - Feb 28, 2018 \n", "(n = 4,472)"),
+            colour = "grey20",
+            family = "Calibri Light",
+            size = 5) +
+  geom_rect(xmin = 56,
+            xmax = 100,
+            ymin = 0,
+            ymax = 15,
+            color = "white",
+            fill = "#c4e5e5",
+            size = 0.25,
+            size= 0.25) +
+  annotate ("text",
+            x=78,
+            y=7.5,
+            label = paste0("Post-policy cohort \n", "Dec 1, 2018 - Feb 28, 2020 \n", "(n = 4,498)"),
+            colour = "grey20",
+            family = "Calibri Light",
+            size =5) +
+  geom_rect(xmin = 54,
+            xmax = 100,
+            ymin = 63,
+            ymax = 82,
+            color = "white",
+            fill = "#eae3d4",
+            size = 0.25,
+            size= 0.25) +
+  annotate ("text",
+            x=55,
+            y=73,
+            label = paste0("Inactive listing (n = 399) \n", "Missing status information (n = 3)"),
+            colour = "grey20",
+            family = "Calibri Light",
+            hjust= 0,
+            size = 5) +
+  geom_rect(xmin = 54,
+            xmax = 100,
+            ymin = 20,
+            ymax = 43,
+            color = "white",
+            fill = "#eae3d4",
+            size = 0.25,
+            size= 0.25) +
+  annotate ("text",
+            x=55,
+            y=31,
+            label = paste0("Listed during transitional period (n = 2,835) \n","Low-volume transplant center* ( n = 519) \n", "Candidate for multi-organ transplant (n = 178)"),
+            colour = "grey20",
+            family = "Calibri Light",
+            hjust = 0,
+            size = 5) +
+  geom_segment(
+    x=50, 
+    xend=50, 
+    y=85, 
+    yend=60, 
+    size=1, 
+    linejoin = "mitre", 
+    lineend = "butt",
+    arrow = arrow(length = unit(2, "mm"), type= "closed"),
+    color = "grey50") +
+  geom_segment(
+    x=50, 
+    xend=54, 
+    y=73, 
+    yend=73, 
+    size=1, linejoin = "mitre", lineend = "butt",
+    arrow = arrow(length = unit(2, "mm"), type= "closed"),
+    color = "grey50") +
+   geom_segment(
+    x=50, 
+    xend=54, 
+    y=30, 
+    yend=30, 
+    size=1, linejoin = "mitre", lineend = "butt",
+    arrow = arrow(length = unit(2, "mm"), type= "closed"),
+    color = "grey50") +
+  geom_segment(
+    x=50, 
+    xend=50, 
+    y=45, 
+    yend=17, 
+    size=1,
+    color = "grey50") +
+ geom_segment(
+    x=22, 
+    xend=78, 
+    y=17, 
+    yend=17, 
+    size=1,
+    color = "grey50") +
+  geom_segment(
+    x=22, 
+    xend=22, 
+    y=17, 
+    yend=15, 
+    size=1,
+    linejoin = "mitre", lineend = "butt",
+    arrow = arrow(length = unit(2, "mm"), type= "closed"),
+    color = "grey50") +
+  geom_segment(
+    x=78, 
+    xend=78, 
+    y=17, 
+    yend=15, 
+    size=1,
+    linejoin = "mitre", lineend = "butt",
+    arrow = arrow(length = unit(2, "mm"), type= "closed"),
+    color = "grey50") +
+  theme_void()
+
+ggsave("C:/Users/julia/Google Drive/Pritzker/SRP/Drafts/Figures/figure1.tiff", figure1, dpi = "print", width = 12, height = 6)
+
+
+figure1_1 <- blank + 
+  geom_rect(xmin = 20,
+            xmax = 80,
+            ymin = 85,
+            ymax = 100,
+            color = "white",
+            fill = "#c4e5e5",
+            size = 0.25,
+            size= 0.25) +
+  annotate ("text",
+            x=50,
+            y=93,
+            label = paste0("Incident adult heart transplant candidates from Dec 2016 to Feb 2020 \n", "(n = 12,904)"),
+            colour = "grey20",
+            family = "Calibri Light",
+            size = 5) +
+  geom_rect(xmin = 20,
+            xmax = 80,
+            ymin = 45,
+            ymax = 60,
+            color = "white",
+            fill = "#c4e5e5",
+            size = 0.25,
+            size= 0.25) +
+  annotate ("text",
+            x=50,
+            y=53,
+            label = paste0("Active candidates \n", "(n = 12,502)"),
+            colour = "grey20",
+            family = "Calibri Light",
+            size = 5) +
+  geom_rect(xmin = 20,
+            xmax = 80,
+            ymin = 0,
+            ymax = 15,
+            color = "white",
+            fill = "#c4e5e5",
+            size = 0.25,
+            size= 0.25) +
+  annotate ("text",
+            x=35,
+            y=7.5,
+            label = paste0("Candidates listed between\n", "Dec 1, 2016 - Feb 28, 2018 \n", "(n = 4,472)"),
+            colour = "grey20",
+            family = "Calibri Light",
+            size = 5) +
+  annotate ("text",
+            x=65,
+            y=7.5,
+            label = paste0("Candidates listed between \n", "Dec 1, 2018 - Feb 28, 2020 \n", "(n = 4,498)"),
+            colour = "grey20",
+            family = "Calibri Light",
+            size =5) +
+  geom_rect(xmin = 54,
+            xmax = 100,
+            ymin = 63,
+            ymax = 82,
+            color = "white",
+            fill = "#eae3d4",
+            size = 0.25,
+            size= 0.25) +
+  annotate ("text",
+            x=55,
+            y=73,
+            label = paste0("Inactive Listing (n = 399) \n", "Missing status information (n = 3)"),
+            colour = "grey20",
+            family = "Calibri Light",
+            hjust= 0,
+            size = 5) +
+  geom_rect(xmin = 54,
+            xmax = 100,
+            ymin = 20,
+            ymax = 43,
+            color = "white",
+            fill = "#eae3d4",
+            size = 0.25,
+            size= 0.25) +
+  annotate ("text",
+            x=55,
+            y=31,
+            label = paste0("Listed during transitional period (n = 2,835) \n","Low-volume transplant center* ( n = 519) \n", "Candidate for multi-organ transplant (n = 178)"),
+            colour = "grey20",
+            family = "Calibri Light",
+            hjust = 0,
+            size = 5) +
+  geom_segment(
+    x=50, 
+    xend=50, 
+    y=85, 
+    yend=60, 
+    size=1, 
+    linejoin = "mitre", 
+    lineend = "butt",
+    arrow = arrow(length = unit(2, "mm"), type= "closed"),
+    color = "grey50") +
+  geom_segment(
+    x=50, 
+    xend=54, 
+    y=73, 
+    yend=73, 
+    size=1, linejoin = "mitre", lineend = "butt",
+    arrow = arrow(length = unit(2, "mm"), type= "closed"),
+    color = "grey50") +
+   geom_segment(
+    x=50, 
+    xend=54, 
+    y=30, 
+    yend=30, 
+    size=1, linejoin = "mitre", lineend = "butt",
+    arrow = arrow(length = unit(2, "mm"), type= "closed"),
+    color = "grey50") +
+  geom_segment(
+    x=50, 
+    xend=50, 
+    y=45, 
+    yend=17, 
+    size=1, linejoin = "mitre", lineend = "butt",
+    arrow = arrow(length = unit(2, "mm"), type= "closed"),
+    color = "grey50") +
+  theme_void()
+
+ggsave("C:/Users/julia/Google Drive/Pritzker/SRP/Drafts/Figures/figure1_1.tiff", figure1_1, dpi = "print", width = 12, height = 6)
+
+```
+Figure 1: Identifying study population from the Scientific Registry of Transplant Recipients database 
+
+Caption: Flow diagram constructed according to STROBE (Strengthening the Reporting of Observational Studies in Epidemiology) guidelines for observational studies. *A transplant center is considered low-volume and its listed candidates dropped from analyses if the center had fewer than 10 active listings per year in 2017, 2018, or 2019, or those with fewer than 10 active listings in total in either of the two policy eras (Dec 1, 2016 - Feb 28, 2018, or Dec 1 ,2018 - Feb 28, 2020)
+
+```{r Figure 2 repeat Kevin's graph}
+supplement_2 <- ggplot(final_sample %>% filter(is.na(policy) == FALSE), aes(x = factor(status), fill = status)) +
+  geom_bar(color = "white") +
+  facet_wrap(.~policy, nrow = 2) +
+  labs(
+    x = "",
+    y = "Number of Candidates",
+    fill = "Treatment") +
+  scale_fill_custom(palette="main",reverse = TRUE) +
+  theme_minimal() +
+theme(axis.title.x = element_text(size=10,family = "Calibri Light"), 
+        axis.title.y = element_text(size=10,family = "Calibri Light", angle=90), 
+        legend.title=element_text(size=10,family = "Calibri Light"),
+        legend.text=element_text(size=10,family = "Calibri Light"),
+        legend.position="bottom",
+        legend.margin = margin(t=-1, r=0, b=-1, l=0, unit="mm"),
+        legend.background = element_blank()) +
+  theme(plot.margin=unit(c(0,2,0,2),"mm")) +
+  facet_wrap(~as.factor(policy),
+             dir = "v") +
+        theme(strip.background = element_rect(fill="grey50",
+                                        colour="white",
+                                        size = unit(4.5,"mm")),
+              strip.text = element_text(size=12, colour="white",family = "Calibri Light"),              strip.text.x = element_text(margin = margin(b=3,t=1)))
+
+#ggsave("Figure_2.pdf")
+ggsave("C:/Users/julia/Google Drive/Pritzker/SRP/Drafts/Figures/supplement2.tiff", supplement_2, dpi = "print", width = 7.29, height = 5.51)
+```
+
+```{r Figure 3 with CMS adjustment}
+opo_shapes3_5CMS <- opo_shapes_CMS %>% 
+  select(OPO,policy_factor, geometry, OPO_rate) %>% 
+  spread(key = policy_factor,value = OPO_rate) %>% 
+  rename(Pre = `Expected`,
+         Post = `Observed`) %>% 
+  mutate(diff = (Post - Pre)/Pre*100) %>% 
+  mutate(diff1 = (Post - Pre)*100)
+
+
+supplement_3CMS1 <- ggplot() + 
+  geom_sf(data = opo_shapes3_5CMS, aes(fill = diff1,geometry = geometry),colour = "white",shape = 5) + 
+  coord_sf(xlim=c(-125,-65), ylim=c(24.5,50), expand = FALSE) +
+  scale_fill_custom(name = "Unit: %",discrete = FALSE)+
+  theme_void() +
+  guides(element_blank()) +
+    theme(legend.title = element_text(size = 10, family = "Calibri Light"),
+        legend.text=element_text(size=10,family = "Calibri Light"),
+        legend.position = "bottom",
+        legend.key.height = unit(3,"mm"),
+        legend.key.width = unit(10,"mm"),
+        legend.margin = margin(t=0, r=0, b=0, l=0, unit="cm"),
+        legend.background = element_blank()
+        ) +
+  theme(plot.margin=unit(c(0,2,0,2),"mm"),
+        aspect.ratio = 0.5) #+
+  facet_grid(cols = vars(as.factor(policy))) +
+        theme(strip.background = element_rect(fill="grey50",
+                                        colour="grey50",
+                                        size = unit(10,"mm")),
+              strip.text = element_text(size=12, colour="white",family = "Calibri Light"),              strip.text.x = element_text(margin = margin(b=3,t=1)))
+  
+ggsave("C:/Users/julia/Google Drive/Pritzker/SRP/Drafts/Figures/supplement_3CMS1.tiff", supplement_3CMS1, dpi = "print",width=7.29, height = 3)
+
+```
+
