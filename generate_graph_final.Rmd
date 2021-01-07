@@ -404,7 +404,7 @@ figure3_CMS <- ggplot(to_plot, aes(x = rank)) +
   #geom_hline(aes(yintercept = pre_policy_rate, linetype = "Pre-policy average")) + 
   scale_linetype_manual(values = c("dashed", "dotted")) +
   theme_classic() +
-  labs(y = "Probability of High Status Listing (%)") + 
+  labs(y = "Probability of High Status Listing") + 
   theme(legend.position = "bottom") +
   scale_color_manual(name = "Policy Period",
                      values = c("#3BA9A9","#660000"),
@@ -430,7 +430,7 @@ figure3_CMS1 <- ggplot(to_plot, aes(x = rank)) +
   #geom_hline(aes(yintercept = pre_policy_rate, linetype = "Pre-policy average")) + 
   scale_linetype_manual(values = c("dashed", "dotted")) +
   theme_classic() +
-  labs(y = "Probability of High Status Listing (%)",
+  labs(y = "Probability of High Status Listing",
        x = "Transplant Center") + 
   theme(legend.position = "bottom") +
   scale_color_manual(name = "Policy Period",
