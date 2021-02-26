@@ -1,0 +1,218 @@
+---
+title: Sensitivity Analyses
+author: "Julia Ran, William Parker"
+output:
+  rmdformats::material:
+    highlight: tango
+  html_document:
+    theme: cosmo
+    toc: yes
+---
+# Loading in packages 
+
+This chunk is used to load in the packages in R that help us to tidy, manipulate, and visualize the data. 
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+require("knitr")
+opts_knit$set(root.dir = "C:/Users/julia/SRP/SRP/Codes/SAF SAS files")
+
+```
+
+
+```{r Load Packages}
+library("ggplot2")  
+library("tidyverse")
+library("haven")
+library("rmdformats")
+library("ggthemes")
+library("dplyr")
+library("tidyselect")
+library(extrafont)
+loadfonts(device = "win") 
+library(lubridate) # for working with dates
+
+```
+
+
+# Part 2 - Exception Requests
+
+
+## Figure S4 - Stacked Caterpillar Plot for exception status 
+```{r}
+
+me_results <- read.csv("C:/Users/julia/SRP/SRP/Codes/SAF SAS files/exception_output1.csv")
+
+pre_policy_rate <- mean(filter(me_results, policy_factor == "Pre")$except_high)
+
+post_policy_rate <- mean(filter(me_results, policy_factor == "Post")$except_high)
+
+
+low_ci_binom <- function(x,n){
+  binom.test(x, n)$conf.int[1]
+}
+
+up_ci_binom<- function(x,n){
+  binom.test(x, n)$conf.int[2]
+}
+
+mean_rates <- me_results %>%
+  mutate(
+         p = 1/(1 + exp(-xb_predicted)),
+         e = 1/(1 + exp(-xb_expected))) %>%
+  group_by(ctr_cd, policy_factor) %>%
+  summarise(unadjusted_rate = mean(except_high),
+            sum_p = sum(p),
+            sum_e = sum(e),
+            n = n()) %>%
+  mutate(o_e_ratio = sum_p/sum_e,
+         adjusted_rate = case_when(
+           policy_factor == "Pre" ~ o_e_ratio*pre_policy_rate,
+           TRUE ~ o_e_ratio*post_policy_rate)
+         ) %>%
+  select(ctr_cd, policy_factor, n, unadjusted_rate, adjusted_rate) %>%
+  ungroup() %>%
+  mutate(p_events = round(adjusted_rate*n),
+         observed_events = round(unadjusted_rate*n))
+
+low_ci <- map2_dbl(mean_rates$p_events, mean_rates$n, low_ci_binom)
+up_ci <- map2_dbl(mean_rates$p_events, mean_rates$n, up_ci_binom)
+low_ci_unadj <- map2_dbl(mean_rates$observed_events, mean_rates$n, low_ci_binom)
+up_ci_unadj <- map2_dbl(mean_rates$observed_events, mean_rates$n, up_ci_binom)
+
+mean_rates1 <- mean_rates  %>%
+  cbind(low_ci, up_ci, low_ci_unadj, up_ci_unadj)
+
+```
+
+```{r center_rates, warning=FALSE, message=FALSE}
+setwd("C:/Users/julia/SRP/SRP/Codes/bootstrap_results")
+
+file_list <- list.files(path="C:/Users/julia/SRP/SRP/Codes/data_codes/bootstrap_exp")
+
+
+center_rates <- tibble()
+for (i in 1:length(file_list)){
+  center_rates  <- center_rates  %>% 
+    rbind(read_csv(paste0("C:/Users/julia/SRP/SRP/Codes/data_codes/bootstrap_exp/",file_list[i])))
+}
+
+low_ci <- function(x) quantile(x, na.rm = TRUE, probs = 0.025)[[1]]
+up_ci <- function(x) quantile(x, na.rm = TRUE, probs = 0.975)[[1]]
+
+center_rates1 <- center_rates %>%
+  rbind(mean_rates1 %>% select(ctr_cd, policy_factor, adjusted_rate)) %>%
+  group_by(ctr_cd, policy_factor) %>%
+  filter(is.na(policy_factor) == FALSE) %>%
+  left_join(mean_rates1 %>% select(ctr_cd, policy_factor, low_ci, up_ci)) %>% 
+  filter( adjusted_rate> low_ci & adjusted_rate < up_ci) %>%  #throw out boostrapped rates beyond the binomial 95% CI
+  summarise(
+            low_ci_bs = low_ci(adjusted_rate),
+            up_ci_bs = up_ci(adjusted_rate),
+            se = sd(adjusted_rate),
+            mean_bs_rate = mean(adjusted_rate, na.rm = TRUE)) %>%
+  left_join(mean_rates1 %>% select(ctr_cd, policy_factor, adjusted_rate)) %>%
+  mutate(low_ci = adjusted_rate - 1.96*se,
+         up_ci = adjusted_rate + 1.96*se,
+         low_ci = ifelse(low_ci < 0, low_ci_bs, low_ci)
+    ) %>% 
+  ungroup()
+
+center_ranks <- center_rates1  %>%
+  ungroup() %>% 
+  filter(policy_factor == "Post") %>%
+  arrange(adjusted_rate) %>%
+  mutate(rank = row_number()) %>%
+  select(ctr_cd, rank)
+
+significance <- center_rates1 %>%
+  select(ctr_cd, policy_factor, adjusted_rate, low_ci, up_ci, se) %>%
+  pivot_wider(names_from = policy_factor, values_from = c(adjusted_rate, low_ci, up_ci, se)) %>%
+  mutate(z_stat = abs(adjusted_rate_Post - adjusted_rate_Pre)/sqrt(se_Post^2 + se_Pre^2),
+         sig1 = case_when(
+           z_stat > 1.96 ~ "*",
+           TRUE ~ " ")
+  ) %>% select(ctr_cd, sig1)
+
+to_plot <- center_rates1 %>% 
+  left_join(center_ranks) %>%
+  left_join(significance) %>%
+  mutate(y_sig = ifelse(policy_factor == "Post",up_ci + 0.05, NA)) %>% 
+  mutate(policy_factor = ifelse(policy_factor == "Pre", "1","2"))
+
+difference <- to_plot %>% 
+  select(ctr_cd, policy_factor, adjusted_rate, sig1) %>% 
+  filter(sig1== "*") %>% 
+  select(ctr_cd,policy_factor, adjusted_rate) %>% 
+  spread(key = policy_factor, value = adjusted_rate) %>% 
+  rename( `pre` = `1`,
+         `post` = `2`) %>% 
+  mutate(diff = 100*(post - pre))
+
+range_diff = difference %>% 
+  select(ctr_cd, diff) %>% 
+  arrange(diff)
+
+iqr_diff = paste0("IQR: ", round(quantile(range_diff$diff,0.25),1),  "% to", round(quantile(range_diff$diff,0.75),1)) 
+
+write.csv(to_plot, "C:/Users/julia/Google Drive/Pritzker/SRP/Codes/data_codes/figure_2b_CMS.csv", row.names = FALSE)
+
+figure3b_CMS <- ggplot(to_plot, aes(x = rank)) +
+  geom_errorbar(aes(ymin = low_ci,
+             ymax = up_ci,
+             color = policy_factor),alpha = 0.75) +
+  geom_point(aes(y =adjusted_rate, color = policy_factor)) + 
+  geom_text(aes(y = y_sig, label = sig1), size = 4) +
+  #geom_hline(aes(yintercept = post_policy_rate, linetype = "Post-policy average")) +
+  #geom_hline(aes(yintercept = pre_policy_rate, linetype = "Pre-policy average")) + 
+  scale_linetype_manual(values = c("dashed", "dotted")) +
+  theme_classic() +
+  labs(y = "Probability of High-Status Exception Request",
+       x = "Transplant centers, ranked") + 
+  theme(legend.position = "bottom") +
+  scale_color_manual(name = "Policy Period",
+                     values = c("#3BA9A9","#660000"),
+                     labels = c("Dec 2016 - Feb 2018","Dec 2018 - Feb 2020"),
+                     guide = "legend") +
+    theme(plot.margin=unit(c(5,5,5,5),"mm")) +
+  theme(axis.title.x = element_text(size=12,family = "Calibri Light"), 
+        axis.title.y = element_text(size=12,family = "Calibri Light", angle=90), 
+        legend.title=element_text(size=12,family = "Calibri Light"),
+        legend.text=element_text(size=12,family = "Calibri Light"),
+        legend.position="bottom",
+        legend.margin = margin(t=-1, r=0, b=-1, l=0, unit="mm"),
+        legend.background = element_blank())
+
+ggsave("C:/Users/julia/Google Drive/SRP/Drafts/Figures/figure3b_CMS1.tiff", figure3b_CMS, dpi = "print", width = 7.29, height = 5.51)
+
+figure3b_CMS1 <- ggplot(to_plot, aes(x = rank)) +
+  geom_errorbar(aes(ymin = low_ci,
+             ymax = up_ci,
+             color = policy_factor),alpha = 0.75) +
+  geom_point(aes(y =adjusted_rate, color = policy_factor)) + 
+  geom_text(aes(y = y_sig, label = sig1), size = 4) +
+  #geom_hline(aes(yintercept = post_policy_rate, linetype = "Post-policy average")) +
+  #geom_hline(aes(yintercept = pre_policy_rate, linetype = "Pre-policy average")) + 
+  scale_linetype_manual(values = c("dashed", "dotted")) +
+  theme_classic() +
+  labs(y = "Probability of High Status Listing",
+       x = "Transplant Center, ranked") + 
+  theme(legend.position = "bottom") +
+  scale_color_manual(name = "Policy Period",
+                     values = c("#3BA9A9","#660000"),
+                     labels = c("Expected","Observed"),
+                     guide = "legend") +
+    theme(plot.margin=unit(c(5,5,5,5),"mm")) +
+  theme(axis.title.x = element_text(size=12,family = "Calibri Light"), 
+        axis.title.y = element_text(size=12,family = "Calibri Light", angle=90), 
+        legend.title=element_text(size=12,family = "Calibri Light"),
+        legend.text=element_text(size=12,family = "Calibri Light"),
+        legend.position="bottom",
+        legend.margin = margin(t=-1, r=0, b=-1, l=0, unit="mm"),
+        legend.background = element_blank())
+
+ggsave("C:/Users/julia/Google Drive/SRP/Drafts/Figures/figure3b_CMS1.tiff", figure3b_CMS1, dpi = "print", width = 7.29, height = 5.51)
+```
+
