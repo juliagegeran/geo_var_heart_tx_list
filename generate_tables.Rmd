@@ -17,7 +17,7 @@ This chunk is used to load in the packages in R that help us to tidy, manipulate
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 
 require("knitr")
-opts_knit$set(root.dir = "C:/Users/julia/Google Drive/Pritzker/SRP/Codes/SAF SAS files")
+opts_knit$set(root.dir = "C:/Users/julia/SRP/SRP/Codes/SAF SAS files")
 
 ```
 
@@ -40,9 +40,9 @@ library(tableone)
 
 The file being uploaded is the same file that was the output of the data_preparation rmd. 
 ```{r read_in_final_sample}
-setwd("C:/Users/julia/Google Drive/Pritzker/SRP/Codes/SAF SAS files")
+setwd("C:/Users/julia/SRP/SRP/Codes/SAF SAS files")
 
-final_sample <- read_csv("final_sample.csv")
+final_sample <- read.csv("C:/Users/julia/SRP/SRP/Codes/SAF SAS files/final_sample.csv")
 
 ```
 
@@ -101,13 +101,13 @@ since there is no status 5 patients in the pre-policy group, I deselecte them to
 
 # Table 1: Candidate demographics and clinical characteristics by policy period
 ```{r select_table_one_variables, warning = FALSE}
-setwd("C:/Users/julia/Google Drive/Pritzker/SRP/Codes/SAF SAS files")
+setwd("C:/Users/julia/SRP/SRP/Codes/SAF SAS files")
 cand_thor <- haven::read_sas("cand_thor.sas7bdat", NULL)# loading in "cand_thor" 
 
 for_table_1 <- final_sample %>% 
   filter(is.na(policy) == FALSE) %>%
   filter(status != "Status 5") %>% 
-  dplyr::select(PX_ID,policy) %>%
+  dplyr::select(PX_ID,policy,treatment) %>%
   left_join(cand_thor) %>%
   filter(PX_ID %in% final_sample$PX_ID) %>%
    mutate(age = CAN_AGE_AT_LISTING,
@@ -183,7 +183,7 @@ for_table_1 <- final_sample %>%
          History_of_Smoking, Working, Education_Status,
          bmi, blood_type, "Diagnosis", eGFR, diabetes, functional_status, #diagnosis and medical comorbidities, some factor variables some continuous
          cardiac_index, pcwp, #hemodynamics
-         payor, #payor
+         payor, treatment #payor
          #ecmo, iabp, lvad, other_mcs, high_dose_inotropes, low_dose_inotropes #treatments- hot coded
          ) %>%
   mutate_if(is.character, factor) %>% 
@@ -208,7 +208,8 @@ var_label_list <- list(age = "Age at listing, yrs",
                       pcwp = "PCWP, mm Hg",
                       payor = "Payor",
                       Working = "Working for income",
-                      Diagnosis = "Diagnosis")
+                      Diagnosis = "Diagnosis",
+                      treatment = "Treatment")
 
 labelled::var_label(for_table_1) <- var_label_list
 labelled::var_label(for_table_1)
@@ -547,6 +548,7 @@ dev.off()
 
 ```
 
+
 ```{r raw mean difference for continuous variables}
 bmi <- for_table_1 %>% 
   select(bmi, policy) %>% 
@@ -646,4 +648,128 @@ pcwp <- for_table_1 %>%
          up_ci = round(diff + 1.96*se_diff,1),
          ci = paste0("[", comma(low_ci), " to ", comma(up_ci), "]"),
          change <- paste0(diff, " ", ci))
+
+
+treatment <- for_table_1 %>% 
+  select(treatment, policy) %>% 
+  group_by(treatment, policy) %>% 
+  summarise(count = n()) %>% 
+  spread(key = policy, value = count) %>% 
+  rename(pre = `Dec 2016 - Feb 2018 (Pre-Policy)`,
+         post = `Dec 2018 - Feb 2020 (Post-policy)`) %>% 
+  mutate(prop_pre = pre/pre_total,
+         prop_post = post/post_total,
+         se_diff = sqrt(
+           (prop_pre * (1-prop_pre)/pre_total)+
+             (prop_post *(1-prop_post)/post_total)
+           )*100,
+         pct_pre = prop_pre*100,
+         pct_post = prop_post*100,
+         abs_pct_diff = round(pct_post - pct_pre, 1),
+         low_ci = round(abs_pct_diff - 1.96*se_diff,1),
+         up_ci = round(abs_pct_diff + 1.96*se_diff,1),
+         ci = paste0("[", comma(low_ci), "% to ", comma(up_ci), "%]"),
+         change <- paste0(abs_pct_diff, " ", ci)
+         ) %>% 
+  rename(change = `change <- paste0(abs_pct_diff, " ", ci)`) %>% 
+  select(treatment, pre, post, change)
+  
+treatment <- for_table_1 %>% 
+  select(treatment, policy) %>% 
+  group_by(treatment, policy) %>% 
+  summarise(count = n()) %>% 
+  spread(key = policy, value = count) %>% 
+  rename(pre = `Dec 2016 - Feb 2018 (Pre-Policy)`,
+         post = `Dec 2018 - Feb 2020 (Post-policy)`) %>% 
+  ungroup() %>% 
+  mutate(prop_pre = pre/pre_total,
+         prop_post = post/post_total,
+         se_diff = sqrt(
+           (prop_pre * (1-prop_pre)/pre_total)+
+             (prop_post *(1-prop_post)/post_total)
+           )*100,
+         pct_pre = prop_pre*100,
+         pct_post = prop_post*100,
+         abs_pct_diff = round(pct_post - pct_pre, 1),
+         low_ci = round(abs_pct_diff - 1.96*se_diff,1),
+         up_ci = round(abs_pct_diff + 1.96*se_diff,1),
+         ci = paste0("[", comma(low_ci), "% to ", comma(up_ci), "%]"),
+         change <- paste0(abs_pct_diff, " ", ci)
+         ) %>% 
+  rename(change = `change <- paste0(abs_pct_diff, " ", ci)`) %>% 
+  select(treatment, pre, post, change)
+```
+
+```{r Table 1 Updated}
+d90_outcome <- final_sample %>% 
+  filter(is.na(policy) == FALSE) %>%
+  filter(status != "Status 5") %>%  
+  dplyr::select(PX_ID,policy,treatment, status, transplanted, list_date, REC_TX_DT,CAN_DEATH_DT) %>% 
+  mutate(d_tx = as.Date(REC_TX_DT) - as.Date(list_date),
+         d_dx = as.Date(CAN_DEATH_DT) - as.Date(list_date)) %>% 
+  mutate(d90 = case_when(
+    is.na(d_tx) == FALSE & d_tx <= 90 ~ "transplanted",
+    is.na(d_dx) == FALSE & d_dx <= 90 ~ "dead",
+    d_tx == 0 ~ "dead",
+    d_dx == 0 ~ "transplanted"
+  )) %>% 
+  mutate(d90 = ifelse(is.na(d90) == TRUE, "censored", d90)) %>% 
+  mutate(dftime = case_when(
+    d90 == "transplanted" ~ d_tx,
+    d90 == "dead" ~ d_dx,
+    d90 == "censored" ~ 90
+  )) %>% 
+  mutate(event_date = case_when(
+    is.na(d_tx) == FALSE & d_tx <= 90 ~ as.Date(REC_TX_DT),
+    is.na(d_dx) == FALSE & d_dx <= 90 ~ as.Date(CAN_DEATH_DT),
+    d_tx == 0 ~ as.Date(REC_TX_DT),
+    d_dx == 0 ~ as.Date(CAN_DEATH_DT),
+    d90 == "censored" ~ as.Date(as.Date(list_date) + 90)
+  )) %>% 
+  mutate(half = case_when(
+    policy == "Dec 2016 - Feb 2018 (Pre-Policy)" & as.Date(list_date) <= as.Date(as.Date("2016-12-01") + 227) ~ "1",
+    policy == "Dec 2016 - Feb 2018 (Pre-Policy)" & as.Date(list_date) > as.Date(as.Date("2016-12-01") + 227) ~ "2",
+    policy == "Dec 2018 - Feb 2020 (Post-policy)" & as.Date(list_date) <= as.Date(as.Date("2018-12-01") + 227) ~ "1",
+    policy == "Dec 2018 - Feb 2020 (Post-policy)" & as.Date(list_date) > as.Date(as.Date("2018-12-01") + 227) ~ "2",
+  ))
+
+which_half <- d90_outcome %>% 
+  select(PX_ID,half)
+
+final_sample2 <- final_sample %>% 
+  left_join(which_half,by="PX_ID")
+
+#count raw number and proportion of transplantation in 90 days
+response <- d90_outcome %>% 
+  group_by(policy,d90) %>% 
+  summarise(count = n()) %>% 
+  ungroup() %>% 
+  spread(key = policy, value = count)
+  
+write.csv(final_sample2, "C:/Users/julia/SRP/SRP/Codes/SAF SAS files/final_sample_half.csv")
+
+pre_total = 4472
+post_total = 4498
+outcome <- response %>% 
+  rename(pre = `Dec 2016 - Feb 2018 (Pre-Policy)`,
+         post = `Dec 2018 - Feb 2020 (Post-policy)`) %>%
+  mutate(prop_pre = pre/pre_total,
+         prop_post = post/post_total,
+         se_diff = sqrt(
+           (prop_pre * (1-prop_pre)/pre_total)+
+             (prop_post *(1-prop_post)/post_total)
+           )*100,
+         pct_pre = prop_pre*100,
+         pct_post = prop_post*100,
+         abs_pct_diff = round(pct_post - pct_pre, 1),
+         low_ci = round(abs_pct_diff - 1.96*se_diff,1),
+         up_ci = round(abs_pct_diff + 1.96*se_diff,1),
+         ci = paste0("[", comma(low_ci), "% to ", comma(up_ci), "%]"),
+         change <- paste0(abs_pct_diff, " ", ci)
+         ) %>% 
+  rename(change = `change <- paste0(abs_pct_diff, " ", ci)`) #%>% 
+  select(d90, pre, post, change)
+  
+#make another data file with candidates parsed in halves based on listing date
+  
 ```
