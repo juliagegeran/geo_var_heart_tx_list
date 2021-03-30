@@ -1,4 +1,4 @@
-# Geographic Variation in High-Priority Listing Status under the New Heart Allocation Policy
+# Between-Center Variation in High-Priority Listing Status under the New Heart Allocation Policy
 The data preparation and analysis code for Geographic Variation in High-Priority Listing Status under the New Heart Allocation Policy by Ran et al.
 
 Data source was the Q1 2020 Scientific Registry of Transplant Recipients(SRTR) Standard Analysis Files (SAF), https://www.srtr.org/requesting-srtr-data/about-srtr-standard-analysis-files/
